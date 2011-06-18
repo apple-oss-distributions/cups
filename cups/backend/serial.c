@@ -1,9 +1,9 @@
 /*
  * "$Id: serial.c 7647 2008-06-16 17:39:40Z mike $"
  *
- *   Serial port backend for the Common UNIX Printing System (CUPS).
+ *   Serial port backend for CUPS.
  *
- *   Copyright 2007-2009 by Apple Inc.
+ *   Copyright 2007-2011 by Apple Inc.
  *   Copyright 1997-2007 by Easy Software Products, all rights reserved.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -26,6 +26,7 @@
  */
 
 #include "backend-private.h"
+#include <stdio.h>
 
 #ifdef __hpux
 #  include <sys/modem.h>
@@ -84,7 +85,7 @@
  */
 
 static void	list_devices(void);
-static void	side_cb(int print_fd, int device_fd, int use_bc);
+static int	side_cb(int print_fd, int device_fd, int use_bc);
 
 
 /*
@@ -109,7 +110,8 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
 		sep;			/* Option separator */
   int		port;			/* Port number (not used) */
   int		copies;			/* Number of copies to print */
-  int		print_fd,		/* Print file */
+  int		side_eof = 0,		/* Saw EOF on side-channel? */
+		print_fd,		/* Print file */
 		device_fd;		/* Serial device */
   int		nfds;			/* Maximum file descriptor value + 1 */
   fd_set	input,			/* Input set for reading */
@@ -162,7 +164,7 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
   else if (argc < 6 || argc > 7)
   {
     _cupsLangPrintf(stderr,
-                    _("Usage: %s job-id user title copies options [file]\n"),
+                    _("Usage: %s job-id user title copies options [file]"),
 	            argv[0]);
     return (CUPS_BACKEND_FAILED);
   }
@@ -185,9 +187,7 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
 
     if ((print_fd = open(argv[6], O_RDONLY)) < 0)
     {
-      _cupsLangPrintf(stderr,
-                      _("ERROR: Unable to open print file \"%s\": %s\n"),
-                      argv[6], strerror(errno));
+      _cupsLangPrintError("ERROR", _("Unable to open print file"));
       return (CUPS_BACKEND_FAILED);
     }
 
@@ -237,9 +237,9 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
 	* available printer in the class.
 	*/
 
-        _cupsLangPuts(stderr,
-	              _("INFO: Unable to contact printer, queuing on next "
-			"printer in class...\n"));
+        _cupsLangPrintFilter(stderr, "INFO",
+			     _("Unable to contact printer, queuing on next "
+			       "printer in class."));
 
        /*
         * Sleep 5 seconds to keep the job from requeuing too rapidly...
@@ -252,15 +252,13 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
 
       if (errno == EBUSY)
       {
-        _cupsLangPuts(stderr,
-	              _("INFO: Printer busy; will retry in 30 seconds...\n"));
+        _cupsLangPrintFilter(stderr, "INFO",
+			     _("Printer busy; will retry in 30 seconds."));
 	sleep(30);
       }
       else
       {
-	_cupsLangPrintf(stderr,
-	                _("ERROR: Unable to open device file \"%s\": %s\n"),
-			resource, strerror(errno));
+	_cupsLangPrintError("ERROR", _("Unable to open device file"));
 	return (CUPS_BACKEND_FAILED);
       }
     }
@@ -320,7 +318,7 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
       * Process the option...
       */
 
-      if (!strcasecmp(name, "baud"))
+      if (!_cups_strcasecmp(name, "baud"))
       {
        /*
         * Set the baud rate...
@@ -377,13 +375,13 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
 	      break;
 #  endif /* B230400 */
           default :
-	      _cupsLangPrintf(stderr, _("WARNING: Unsupported baud rate %s!\n"),
-			      value);
+	      _cupsLangPrintFilter(stderr, "WARNING",
+	                           _("Unsupported baud rate: %s"), value);
 	      break;
 	}
 #endif /* B19200 == 19200 */
       }
-      else if (!strcasecmp(name, "bits"))
+      else if (!_cups_strcasecmp(name, "bits"))
       {
        /*
         * Set number of data bits...
@@ -404,25 +402,25 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
 	      break;
 	}
       }
-      else if (!strcasecmp(name, "parity"))
+      else if (!_cups_strcasecmp(name, "parity"))
       {
        /*
 	* Set parity checking...
 	*/
 
-	if (!strcasecmp(value, "even"))
+	if (!_cups_strcasecmp(value, "even"))
 	{
 	  opts.c_cflag |= PARENB;
           opts.c_cflag &= ~PARODD;
 	}
-	else if (!strcasecmp(value, "odd"))
+	else if (!_cups_strcasecmp(value, "odd"))
 	{
 	  opts.c_cflag |= PARENB;
           opts.c_cflag |= PARODD;
 	}
-	else if (!strcasecmp(value, "none"))
+	else if (!_cups_strcasecmp(value, "none"))
 	  opts.c_cflag &= ~PARENB;
-	else if (!strcasecmp(value, "space"))
+	else if (!_cups_strcasecmp(value, "space"))
 	{
 	 /*
 	  * Note: we only support space parity with 7 bits per character...
@@ -432,7 +430,7 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
           opts.c_cflag |= CS8;
 	  opts.c_cflag &= ~PARENB;
         }
-	else if (!strcasecmp(value, "mark"))
+	else if (!_cups_strcasecmp(value, "mark"))
 	{
 	 /*
 	  * Note: we only support mark parity with 7 bits per character
@@ -445,29 +443,29 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
           opts.c_cflag |= CSTOPB;
         }
       }
-      else if (!strcasecmp(name, "flow"))
+      else if (!_cups_strcasecmp(name, "flow"))
       {
        /*
 	* Set flow control...
 	*/
 
-	if (!strcasecmp(value, "none"))
+	if (!_cups_strcasecmp(value, "none"))
 	{
 	  opts.c_iflag &= ~(IXON | IXOFF);
           opts.c_cflag &= ~CRTSCTS;
 	}
-	else if (!strcasecmp(value, "soft"))
+	else if (!_cups_strcasecmp(value, "soft"))
 	{
 	  opts.c_iflag |= IXON | IXOFF;
           opts.c_cflag &= ~CRTSCTS;
 	}
-	else if (!strcasecmp(value, "hard") ||
-	         !strcasecmp(value, "rtscts"))
+	else if (!_cups_strcasecmp(value, "hard") ||
+	         !_cups_strcasecmp(value, "rtscts"))
         {
 	  opts.c_iflag &= ~(IXON | IXOFF);
           opts.c_cflag |= CRTSCTS;
 	}
-	else if (!strcasecmp(value, "dtrdsr"))
+	else if (!_cups_strcasecmp(value, "dtrdsr"))
 	{
 	  opts.c_iflag &= ~(IXON | IXOFF);
           opts.c_cflag &= ~CRTSCTS;
@@ -475,7 +473,7 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
 	  dtrdsr = 1;
 	}
       }
-      else if (!strcasecmp(name, "stop"))
+      else if (!_cups_strcasecmp(name, "stop"))
       {
         switch (atoi(value))
 	{
@@ -501,7 +499,7 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
   * stdin (otherwise you can't cancel raw jobs...)
   */
 
-  if (print_fd != 0)
+  if (!print_fd)
   {
 #ifdef HAVE_SIGSET /* Use System V signals over POSIX to avoid bugs */
     sigset(SIGTERM, SIG_IGN);
@@ -558,7 +556,7 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
       if (!print_bytes)
 	FD_SET(print_fd, &input);
       FD_SET(device_fd, &input);
-      if (!print_bytes)
+      if (!print_bytes && !side_eof)
         FD_SET(CUPS_SC_FD, &input);
 
       FD_ZERO(&output);
@@ -579,7 +577,8 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
 	* loop since it may have read from print_fd...
 	*/
 
-        side_cb(print_fd, device_fd, 1);
+        if (side_cb(print_fd, device_fd, 1))
+	  side_eof = 1;
 	continue;
       }
 
@@ -592,7 +591,7 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
 	if ((bc_bytes = read(device_fd, bc_buffer, sizeof(bc_buffer))) > 0)
 	{
 	  fprintf(stderr,
-	          "DEBUG: Received " CUPS_LLFMT " bytes of back-channel data!\n",
+	          "DEBUG: Received " CUPS_LLFMT " bytes of back-channel data\n",
 	          CUPS_LLCAST bc_bytes);
           cupsBackChannelWrite(bc_buffer, bc_bytes, 1.0);
 	}
@@ -612,7 +611,7 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
 
 	  if (errno != EAGAIN || errno != EINTR)
 	  {
-	    _cupsLangPrintError(_("ERROR: Unable to read print data"));
+	    perror("DEBUG: Unable to read print data");
 
             tcsetattr(device_fd, TCSADRAIN, &origopts);
 
@@ -688,7 +687,7 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
 
 	  if (errno != EAGAIN && errno != EINTR && errno != ENOTTY)
 	  {
-	    _cupsLangPrintError(_("ERROR: Unable to write print data"));
+	    perror("DEBUG: Unable to write print data");
 
             tcsetattr(device_fd, TCSADRAIN, &origopts);
 
@@ -723,7 +722,7 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
   if (print_fd != 0)
     close(print_fd);
 
-  return (total_bytes < 0 ? CUPS_BACKEND_FAILED : CUPS_BACKEND_OK);
+  return (CUPS_BACKEND_OK);
 }
 
 
@@ -1218,11 +1217,11 @@ list_devices(void)
 
 
 	/* Check if hidden... */
-	hiddenVal = IORegistryEntrySearchCFProperty(serialService, 
+	hiddenVal = IORegistryEntrySearchCFProperty(serialService,
 						    kIOServicePlane,
 						    CFSTR("HiddenPort"),
 						    kCFAllocatorDefault,
-						    kIORegistryIterateRecursively | 
+						    kIORegistryIterateRecursively |
 						    kIORegistryIterateParents);
 	if (hiddenVal)
 	  CFRelease(hiddenVal);	/* This interface should not be used */
@@ -1238,7 +1237,7 @@ list_devices(void)
 					sizeof(serialName),
 					kCFStringEncodingASCII);
 	    CFRelease(serialNameAsCFString);
-  
+
 	    if (result)
 	    {
 	      bsdPathAsCFString =
@@ -1251,7 +1250,7 @@ list_devices(void)
 					    sizeof(bsdPath),
 					    kCFStringEncodingASCII);
 		CFRelease(bsdPathAsCFString);
-  
+
 		if (result)
 		  printf("serial serial:%s?baud=115200 \"Unknown\" \"%s\"\n",
 			 bsdPath, serialName);
@@ -1278,7 +1277,7 @@ list_devices(void)
  * 'side_cb()' - Handle side-channel requests...
  */
 
-static void
+static int				/* O - 0 on success, -1 on error */
 side_cb(int print_fd,			/* I - Print file */
         int device_fd,			/* I - Device file */
 	int use_bc)			/* I - Using back-channel? */
@@ -1292,11 +1291,7 @@ side_cb(int print_fd,			/* I - Print file */
   datalen = sizeof(data);
 
   if (cupsSideChannelRead(&command, &status, data, &datalen, 1.0))
-  {
-    _cupsLangPuts(stderr,
-                  _("WARNING: Failed to read side-channel request!\n"));
-    return;
-  }
+    return (-1);
 
   switch (command)
   {
@@ -1323,7 +1318,7 @@ side_cb(int print_fd,			/* I - Print file */
 	break;
   }
 
-  cupsSideChannelWrite(command, status, data, datalen, 1.0);
+  return (cupsSideChannelWrite(command, status, data, datalen, 1.0));
 }
 
 

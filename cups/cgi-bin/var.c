@@ -1,9 +1,9 @@
 /*
  * "$Id: var.c 7460 2008-04-16 02:19:54Z mike $"
  *
- *   CGI form variable and array functions.
+ *   CGI form variable and array functions for CUPS.
  *
- *   Copyright 2007-2009 by Apple Inc.
+ *   Copyright 2007-2011 by Apple Inc.
  *   Copyright 1997-2005 by Easy Software Products.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -14,31 +14,49 @@
  *
  * Contents:
  *
- *   cgiCheckVariables()        - Check for the presence of "required" variables.
- *   cgiGetArray()              - Get an element from a form array...
- *   cgiGetFile()               - Get the file (if any) that was submitted in the form.
+ *   cgiCheckVariables()        - Check for the presence of "required"
+ *                                variables.
+ *   cgiClearVariables()        - Clear all form variables.
+ *   cgiGetArray()              - Get an element from a form array.
+ *   cgiGetCookie()             - Get a cookie value.
+ *   cgiGetFile()               - Get the file (if any) that was submitted in
+ *                                the form.
  *   cgiGetSize()               - Get the size of a form array value.
- *   cgiGetVariable()           - Get a CGI variable from the database...
- *   cgiInitialize()            - Initialize the CGI variable "database"...
+ *   cgiGetVariable()           - Get a CGI variable from the database.
+ *   cgiInitialize()            - Initialize the CGI variable "database".
  *   cgiIsPOST()                - Determine whether this page was POSTed.
  *   cgiSetArray()              - Set array element N to the specified string.
+ *   cgiSetCookie()             - Set a cookie value.
  *   cgiSetSize()               - Set the array size.
- *   cgiSetVariable()           - Set a CGI variable in the database...
+ *   cgiSetVariable()           - Set a CGI variable in the database.
  *   cgi_add_variable()         - Add a form variable.
  *   cgi_compare_variables()    - Compare two variables.
- *   cgi_find_variable()        - Find a variable...
- *   cgi_initialize_get()       - Initialize form variables using the GET method.
- *   cgi_initialize_multipart() - Initialize variables and file using the POST method.
+ *   cgi_find_variable()        - Find a variable.
+ *   cgi_initialize_cookies()   - Initialize cookies.
+ *   cgi_initialize_get()       - Initialize form variables using the GET
+ *                                method.
+ *   cgi_initialize_multipart() - Initialize variables and file using the POST
+ *                                method.
  *   cgi_initialize_post()      - Initialize variables using the POST method.
  *   cgi_initialize_string()    - Initialize form variables from a string.
- *   cgi_passwd()               - Catch authentication requests and notify the server.
+ *   cgi_passwd()               - Catch authentication requests and notify the
+ *                                server.
+ *   cgi_set_sid()              - Set the CUPS session ID.
  *   cgi_sort_variables()       - Sort all form variables for faster lookup.
  *   cgi_unlink_file()          - Remove the uploaded form.
  */
 
 /*#define DEBUG*/
 #include "cgi-private.h"
-#include <errno.h>
+#include <cups/http.h>
+#include <cups/md5-private.h>
+
+
+/*
+ * Session ID name
+ */
+
+#define CUPS_SID	"org.cups.sid"
 
 
 /*
@@ -58,6 +76,8 @@ typedef struct				/**** Form variable structure ****/
  * Local globals...
  */
 
+static int		num_cookies = 0;/* Number of cookies */
+static cups_option_t	*cookies = NULL;/* Cookies */
 static int		form_count = 0,	/* Form variable count */
 			form_alloc = 0;	/* Number of variables allocated */
 static _cgi_var_t	*form_vars = NULL;
@@ -75,11 +95,13 @@ static void		cgi_add_variable(const char *name, int element,
 static int		cgi_compare_variables(const _cgi_var_t *v1,
 			                      const _cgi_var_t *v2);
 static _cgi_var_t	*cgi_find_variable(const char *name);
+static void		cgi_initialize_cookies(void);
 static int		cgi_initialize_get(void);
 static int		cgi_initialize_multipart(const char *boundary);
 static int		cgi_initialize_post(void);
 static int		cgi_initialize_string(const char *data);
 static const char	*cgi_passwd(const char *prompt);
+static const char	*cgi_set_sid(void);
 static void		cgi_sort_variables(void);
 static void		cgi_unlink_file(void);
 
@@ -135,7 +157,32 @@ cgiCheckVariables(const char *names)	/* I - Variables to look for */
 
 
 /*
- * 'cgiGetArray()' - Get an element from a form array...
+ * 'cgiClearVariables()' - Clear all form variables.
+ */
+
+void
+cgiClearVariables(void)
+{
+  int		i, j;			/* Looping vars */
+  _cgi_var_t	*v;			/* Current variable */
+
+
+  for (v = form_vars, i = form_count; i > 0; v ++, i --)
+  {
+    _cupsStrFree(v->name);
+    for (j = 0; j < v->nvalues; j ++)
+      if (v->values[j])
+        _cupsStrFree(v->values[j]);
+  }
+
+  form_count = 0;
+
+  cgi_unlink_file();
+}
+
+
+/*
+ * 'cgiGetArray()' - Get an element from a form array.
  */
 
 const char *				/* O - Element value or NULL */
@@ -151,7 +198,18 @@ cgiGetArray(const char *name,		/* I - Name of array variable */
   if (element < 0 || element >= var->nvalues)
     return (NULL);
 
-  return (var->values[element]);
+  return (_cupsStrRetain(var->values[element]));
+}
+
+
+/*
+ * 'cgiGetCookie()' - Get a cookie value.
+ */
+
+const char *				/* O - Value or NULL */
+cgiGetCookie(const char *name)		/* I - Name of cookie */
+{
+  return (cupsGetOption(name, num_cookies, cookies));
 }
 
 
@@ -184,10 +242,10 @@ cgiGetSize(const char *name)		/* I - Name of variable */
 
 
 /*
- * 'cgiGetVariable()' - Get a CGI variable from the database...
+ * 'cgiGetVariable()' - Get a CGI variable from the database.
  *
  * Returns NULL if the variable doesn't exist.  If the variable is an
- * array of values, returns the last element...
+ * array of values, returns the last element.
  */
 
 const char *				/* O - Value of variable */
@@ -206,19 +264,21 @@ cgiGetVariable(const char *name)	/* I - Name of variable */
 		  var->values[var->nvalues - 1]));
 #endif /* DEBUG */
 
-  return ((var == NULL) ? NULL : var->values[var->nvalues - 1]);
+  return ((var == NULL) ? NULL : _cupsStrRetain(var->values[var->nvalues - 1]));
 }
 
 
 /*
- * 'cgiInitialize()' - Initialize the CGI variable "database"...
+ * 'cgiInitialize()' - Initialize the CGI variable "database".
  */
 
 int					/* O - Non-zero if there was form data */
 cgiInitialize(void)
 {
-  const char	*method;		/* Form posting method */
-  const char	*content_type;		/* Content-Type of post data */
+  const char	*method,		/* Form posting method */
+		*content_type,		/* Content-Type of post data */
+		*cups_sid_cookie,	/* SID cookie */
+		*cups_sid_form;		/* SID form variable */
 
 
  /*
@@ -242,6 +302,20 @@ cgiInitialize(void)
 #endif /* DEBUG */
 
  /*
+  * Get cookies...
+  */
+
+  cgi_initialize_cookies();
+
+  if ((cups_sid_cookie = cgiGetCookie(CUPS_SID)) == NULL)
+  {
+    fputs("DEBUG: " CUPS_SID " cookie not found, initializing!\n", stderr);
+    cups_sid_cookie = cgi_set_sid();
+  }
+
+  fprintf(stderr, "DEBUG: " CUPS_SID " cookie is \"%s\"\n", cups_sid_cookie);
+
+ /*
   * Get the request method (GET or POST)...
   */
 
@@ -254,9 +328,9 @@ cgiInitialize(void)
   * Grab form data from the corresponding location...
   */
 
-  if (!strcasecmp(method, "GET"))
+  if (!_cups_strcasecmp(method, "GET"))
     return (cgi_initialize_get());
-  else if (!strcasecmp(method, "POST") && content_type)
+  else if (!_cups_strcasecmp(method, "POST") && content_type)
   {
     const char *boundary = strstr(content_type, "boundary=");
 
@@ -264,9 +338,27 @@ cgiInitialize(void)
       boundary += 9;
 
     if (content_type && !strncmp(content_type, "multipart/form-data; ", 21))
-      return (cgi_initialize_multipart(boundary));
+    {
+      if (!cgi_initialize_multipart(boundary))
+        return (0);
+    }
+    else if (!cgi_initialize_post())
+      return (0);
+
+    if ((cups_sid_form = cgiGetVariable(CUPS_SID)) == NULL ||
+	strcmp(cups_sid_cookie, cups_sid_form))
+    {
+      if (cups_sid_form)
+	fprintf(stderr, "DEBUG: " CUPS_SID " form variable is \"%s\"\n",
+	        cups_sid_form);
+      else
+	fputs("DEBUG: " CUPS_SID " form variable is not present.\n", stderr);
+
+      cgiClearVariables();
+      return (0);
+    }
     else
-      return (cgi_initialize_post());
+      return (1);
   }
   else
     return (0);
@@ -337,10 +429,42 @@ cgiSetArray(const char *name,		/* I - Name of variable */
       var->nvalues = element + 1;
     }
     else if (var->values[element])
-      free((char *)var->values[element]);
+      _cupsStrFree((char *)var->values[element]);
 
-    var->values[element] = strdup(value);
+    var->values[element] = _cupsStrAlloc(value);
   }
+}
+
+
+/*
+ * 'cgiSetCookie()' - Set a cookie value.
+ */
+
+void
+cgiSetCookie(const char *name,		/* I - Name */
+             const char *value,		/* I - Value */
+             const char *path,		/* I - Path (typically "/") */
+	     const char *domain,	/* I - Domain name */
+	     time_t     expires,	/* I - Expiration date (0 for session) */
+	     int        secure)		/* I - Require SSL */
+{
+  num_cookies = cupsAddOption(name, value, num_cookies, &cookies);
+
+  printf("Set-Cookie: %s=%s;", name, value);
+  if (path)
+    printf("; path=%s", path);
+  if (domain)
+    printf("; domain=%s", domain);
+  if (expires)
+  {
+    char	date[256];		/* Date string */
+
+    printf("; expires=%s", httpGetDateString2(expires, date, sizeof(date)));
+  }
+  if (secure)
+    puts("; secure;");
+  else
+    puts(";");
 }
 
 
@@ -384,7 +508,7 @@ cgiSetSize(const char *name,		/* I - Name of variable */
   {
     for (i = size; i < var->nvalues; i ++)
       if (var->values[i])
-        free((void *)(var->values[i]));
+        _cupsStrFree((void *)(var->values[i]));
   }
 
   var->nvalues = size;
@@ -392,7 +516,7 @@ cgiSetSize(const char *name,		/* I - Name of variable */
 
 
 /*
- * 'cgiSetVariable()' - Set a CGI variable in the database...
+ * 'cgiSetVariable()' - Set a CGI variable in the database.
  *
  * If the variable is an array, this truncates the array to a single element.
  */
@@ -417,9 +541,9 @@ cgiSetVariable(const char *name,	/* I - Name of variable */
   {
     for (i = 0; i < var->nvalues; i ++)
       if (var->values[i])
-        free((char *)var->values[i]);
+        _cupsStrFree((char *)var->values[i]);
 
-    var->values[0] = strdup(value);
+    var->values[0] = _cupsStrAlloc(value);
     var->nvalues   = 1;
   }
 }
@@ -465,10 +589,10 @@ cgi_add_variable(const char *name,	/* I - Variable name */
   if ((var->values = calloc(element + 1, sizeof(char *))) == NULL)
     return;
 
-  var->name            = strdup(name);
+  var->name            = _cupsStrAlloc(name);
   var->nvalues         = element + 1;
   var->avalues         = element + 1;
-  var->values[element] = strdup(value);
+  var->values[element] = _cupsStrAlloc(value);
 
   form_count ++;
 }
@@ -483,12 +607,12 @@ cgi_compare_variables(
     const _cgi_var_t *v1,		/* I - First variable */
     const _cgi_var_t *v2)		/* I - Second variable */
 {
-  return (strcasecmp(v1->name, v2->name));
+  return (_cups_strcasecmp(v1->name, v2->name));
 }
 
 
 /*
- * 'cgi_find_variable()' - Find a variable...
+ * 'cgi_find_variable()' - Find a variable.
  */
 
 static _cgi_var_t *			/* O - Variable pointer or NULL */
@@ -504,6 +628,91 @@ cgi_find_variable(const char *name)	/* I - Name of variable */
 
   return ((_cgi_var_t *)bsearch(&key, form_vars, form_count, sizeof(_cgi_var_t),
                            (int (*)(const void *, const void *))cgi_compare_variables));
+}
+
+
+/*
+ * 'cgi_initialize_cookies()' - Initialize cookies.
+ */
+
+static void
+cgi_initialize_cookies(void)
+{
+  const char	*cookie;		/* HTTP_COOKIE environment variable */
+  char		name[128],		/* Name string */
+		value[512],		/* Value string */
+		*ptr;			/* Pointer into name/value */
+
+
+  if ((cookie = getenv("HTTP_COOKIE")) == NULL)
+    return;
+
+  while (*cookie)
+  {
+   /*
+    * Skip leading whitespace...
+    */
+
+    while (isspace(*cookie & 255))
+      cookie ++;
+    if (!*cookie)
+      break;
+
+   /*
+    * Copy the name...
+    */
+
+    for (ptr = name; *cookie && *cookie != '=';)
+      if (ptr < (name + sizeof(name) - 1))
+        *ptr++ = *cookie++;
+      else
+        break;
+
+    if (*cookie != '=')
+      break;
+
+    *ptr = '\0';
+    cookie ++;
+
+   /*
+    * Then the value...
+    */
+
+    if (*cookie == '\"')
+    {
+      for (cookie ++, ptr = value; *cookie && *cookie != '\"';)
+        if (ptr < (value + sizeof(value) - 1))
+	  *ptr++ = *cookie++;
+	else
+	  break;
+
+      if (*cookie == '\"')
+        cookie ++;
+    }
+    else
+    {
+      for (ptr = value; *cookie && *cookie != ';';)
+        if (ptr < (value + sizeof(value) - 1))
+	  *ptr++ = *cookie++;
+	else
+	  break;
+    }
+
+    if (*cookie == ';')
+      cookie ++;
+    else if (*cookie)
+      break;
+
+    *ptr = '\0';
+
+   /*
+    * Then add the cookie to an array as long as the name doesn't start with
+    * "$"...
+    */
+
+    if (name[0] != '$')
+      num_cookies = cupsAddOption(name, value, num_cookies, &cookies);
+  }
 }
 
 
@@ -536,7 +745,8 @@ cgi_initialize_get(void)
 
 
 /*
- * 'cgi_initialize_multipart()' - Initialize variables and file using the POST method.
+ * 'cgi_initialize_multipart()' - Initialize variables and file using the POST
+ *                                method.
  *
  * TODO: Update to support files > 2GB.
  */
@@ -614,7 +824,7 @@ cgi_initialize_multipart(
        /*
         * Copy file data to the temp file...
 	*/
-	
+
         ptr = line;
 
 	while ((ch = getchar()) != EOF)
@@ -718,7 +928,7 @@ cgi_initialize_multipart(
       filename[0] = '\0';
       mimetype[0] = '\0';
     }
-    else if (!strncasecmp(line, "Content-Disposition:", 20))
+    else if (!_cups_strncasecmp(line, "Content-Disposition:", 20))
     {
       if ((ptr = strstr(line + 20, " name=\"")) != NULL)
       {
@@ -736,7 +946,7 @@ cgi_initialize_multipart(
 	  *ptr = '\0';
       }
     }
-    else if (!strncasecmp(line, "Content-Type:", 13))
+    else if (!_cups_strncasecmp(line, "Content-Type:", 13))
     {
       for (ptr = line + 13; isspace(*ptr & 255); ptr ++);
 
@@ -848,7 +1058,7 @@ cgi_initialize_string(const char *data)	/* I - Form data string */
   char	*s,				/* Pointer to current form string */
 	ch,				/* Temporary character */
 	name[255],			/* Name of form variable */
-	value[65536];			/* Variable value... */
+	value[65536];			/* Variable value */
 
 
  /*
@@ -900,6 +1110,9 @@ cgi_initialize_string(const char *data)	/* I - Form data string */
 	   /*
 	    * Read the hex code...
 	    */
+
+            if (!isxdigit(data[1] & 255) || !isxdigit(data[2] & 255))
+	      return (0);
 
             if (s < (value + sizeof(value) - 1))
 	    {
@@ -985,6 +1198,46 @@ cgi_passwd(const char *prompt)		/* I - Prompt (not used) */
   */
 
   return (NULL);
+}
+
+
+/*
+ * 'cgi_set_sid()' - Set the CUPS session ID.
+ */
+
+static const char *			/* O - New session ID */
+cgi_set_sid(void)
+{
+  char			buffer[512],	/* SID data */
+			sid[33];	/* SID string */
+  _cups_md5_state_t	md5;		/* MD5 state */
+  unsigned char		sum[16];	/* MD5 sum */
+  const char		*remote_addr,	/* REMOTE_ADDR */
+			*server_name,	/* SERVER_NAME */
+			*server_port;	/* SERVER_PORT */
+
+
+  if ((remote_addr = getenv("REMOTE_ADDR")) == NULL)
+    remote_addr = "REMOTE_ADDR";
+  if ((server_name = getenv("SERVER_NAME")) == NULL)
+    server_name = "SERVER_NAME";
+  if ((server_port = getenv("SERVER_PORT")) == NULL)
+    server_port = "SERVER_PORT";
+
+  CUPS_SRAND(time(NULL));
+  snprintf(buffer, sizeof(buffer), "%s:%s:%s:%02X%02X%02X%02X%02X%02X%02X%02X",
+           remote_addr, server_name, server_port,
+	   (unsigned)CUPS_RAND() & 255, (unsigned)CUPS_RAND() & 255,
+	   (unsigned)CUPS_RAND() & 255, (unsigned)CUPS_RAND() & 255,
+	   (unsigned)CUPS_RAND() & 255, (unsigned)CUPS_RAND() & 255,
+	   (unsigned)CUPS_RAND() & 255, (unsigned)CUPS_RAND() & 255);
+  _cupsMD5Init(&md5);
+  _cupsMD5Append(&md5, (unsigned char *)buffer, (int)strlen(buffer));
+  _cupsMD5Finish(&md5, sum);
+
+  cgiSetCookie(CUPS_SID, httpMD5String(sum, sid), "/", NULL, 0, 0);
+
+  return (cupsGetOption(CUPS_SID, num_cookies, cookies));
 }
 
 

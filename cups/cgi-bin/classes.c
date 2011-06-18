@@ -1,9 +1,9 @@
 /*
  * "$Id: classes.c 7940 2008-09-16 00:45:16Z mike $"
  *
- *   Class status CGI for the Common UNIX Printing System (CUPS).
+ *   Class status CGI for CUPS.
  *
- *   Copyright 2007-2008 by Apple Inc.
+ *   Copyright 2007-2011 by Apple Inc.
  *   Copyright 1997-2006 by Easy Software Products.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -72,6 +72,7 @@ main(int  argc,				/* I - Number of command-line arguments */
   */
 
   cgiSetVariable("SECTION", "classes");
+  cgiSetVariable("REFRESH_PAGE", "");
 
  /*
   * See if we are displaying a printer or all classes...
@@ -146,7 +147,21 @@ main(int  argc,				/* I - Number of command-line arguments */
   }
   else if (pclass)
   {
-    if (!strcmp(op, "start-class"))
+    if (!*op)
+    {
+      const char *server_port = getenv("SERVER_PORT");
+					/* Port number string */
+      int	port = atoi(server_port ? server_port : "0");
+      					/* Port number */
+      char	uri[1024];		/* URL */
+
+      httpAssembleURIf(HTTP_URI_CODING_ALL, uri, sizeof(uri),
+		       getenv("HTTPS") ? "https" : "http", NULL,
+		       getenv("SERVER_NAME"), port, "/classes/%s", pclass);
+
+      printf("Location: %s\n\n", uri);
+    }
+    else if (!strcmp(op, "start-class"))
       do_class_op(http, pclass, IPP_RESUME_PRINTER, cgiText(_("Resume Class")));
     else if (!strcmp(op, "stop-class"))
       do_class_op(http, pclass, IPP_PAUSE_PRINTER, cgiText(_("Pause Class")));
@@ -156,9 +171,9 @@ main(int  argc,				/* I - Number of command-line arguments */
       do_class_op(http, pclass, CUPS_REJECT_JOBS, cgiText(_("Reject Jobs")));
     else if (!strcmp(op, "purge-jobs"))
       do_class_op(http, pclass, IPP_PURGE_JOBS, cgiText(_("Purge Jobs")));
-    else if (!strcasecmp(op, "print-test-page"))
+    else if (!_cups_strcasecmp(op, "print-test-page"))
       cgiPrintTestPage(http, pclass);
-    else if (!strcasecmp(op, "move-jobs"))
+    else if (!_cups_strcasecmp(op, "move-jobs"))
       cgiMoveJobs(http, pclass, 0);
     else
     {
@@ -366,7 +381,7 @@ show_all_classes(http_t     *http,	/* I - Connection to server */
     cgiSetVariable("TOTAL", val);
 
     if ((var = cgiGetVariable("ORDER")) != NULL)
-      ascending = !strcasecmp(var, "asc");
+      ascending = !_cups_strcasecmp(var, "asc");
     else
       ascending = 1;
 

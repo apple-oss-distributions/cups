@@ -1,9 +1,9 @@
 dnl
-dnl "$Id: cups-common.m4 7900 2008-09-03 13:47:57Z mike $"
+dnl "$Id: cups-common.m4 8781 2009-08-28 17:34:54Z mike $"
 dnl
-dnl   Common configuration stuff for the Common UNIX Printing System (CUPS).
+dnl   Common configuration stuff for CUPS.
 dnl
-dnl   Copyright 2007-2009 by Apple Inc.
+dnl   Copyright 2007-2011 by Apple Inc.
 dnl   Copyright 1997-2007 by Easy Software Products, all rights reserved.
 dnl
 dnl   These coded instructions, statements, and computer programs are the
@@ -20,7 +20,7 @@ dnl Set the name of the config header file...
 AC_CONFIG_HEADER(config.h)
 
 dnl Version number information...
-CUPS_VERSION="1.4.0"
+CUPS_VERSION="1.5.0"
 CUPS_REVISION=""
 #if test -z "$CUPS_REVISION" -a -d .svn; then
 #	CUPS_REVISION="-r`svnversion . | awk -F: '{print $NF}' | sed -e '1,$s/[[a-zA-Z]]*//g'`"
@@ -88,6 +88,9 @@ fi
 
 AC_SUBST(INSTALLSTATIC)
 
+dnl Check for pkg-config, which is used for some other tests later on...
+AC_PATH_PROG(PKGCONFIG, pkg-config)
+
 dnl Check for libraries...
 AC_SEARCH_LIBS(crypt, crypt)
 AC_SEARCH_LIBS(getspent, sec gen)
@@ -133,8 +136,24 @@ AC_CHECK_HEADER(sys/param.h,AC_DEFINE(HAVE_SYS_PARAM_H))
 AC_CHECK_HEADER(sys/ucred.h,AC_DEFINE(HAVE_SYS_UCRED_H))
 AC_CHECK_HEADER(scsi/sg.h,AC_DEFINE(HAVE_SCSI_SG_H))
 
+dnl Checks for iconv.h and iconv_open
+AC_CHECK_HEADER(iconv.h,
+	SAVELIBS="$LIBS"
+	LIBS=""
+	AC_SEARCH_LIBS(iconv_open,iconv,
+		AC_DEFINE(HAVE_ICONV_H)
+		SAVELIBS="$SAVELIBS $LIBS")
+	LIBS="$SAVELIBS")
+
+dnl Checks for statfs and its many headers...
+AC_CHECK_HEADER(sys/mount.h,AC_DEFINE(HAVE_SYS_MOUNT_H))
+AC_CHECK_HEADER(sys/statfs.h,AC_DEFINE(HAVE_SYS_STATFS_H))
+AC_CHECK_HEADER(sys/statvfs.h,AC_DEFINE(HAVE_SYS_STATVFS_H))
+AC_CHECK_HEADER(sys/vfs.h,AC_DEFINE(HAVE_SYS_VFS_H))
+AC_CHECK_FUNCS(statfs statvfs)
+
 dnl Checks for string functions.
-AC_CHECK_FUNCS(strdup strcasecmp strncasecmp strlcat strlcpy)
+AC_CHECK_FUNCS(strdup strlcat strlcpy)
 if test "$uname" = "HP-UX" -a "$uversion" = "1020"; then
 	echo Forcing snprintf emulation for HP-UX.
 else
@@ -142,10 +161,13 @@ else
 fi
 
 dnl Check for random number functions...
-AC_CHECK_FUNCS(random mrand48 lrand48)
+AC_CHECK_FUNCS(random lrand48 arc4random)
 
 dnl Check for geteuid function.
 AC_CHECK_FUNCS(geteuid)
+
+dnl Check for setpgid function.
+AC_CHECK_FUNCS(setpgid)
 
 dnl Check for vsyslog function.
 AC_CHECK_FUNCS(vsyslog)
@@ -174,6 +196,14 @@ AC_TRY_COMPILE([#include <time.h>],[struct tm t;
 	AC_DEFINE(HAVE_TM_GMTOFF),
 	AC_MSG_RESULT(no))
 
+dnl See if the stat structure has the st_gen member...
+AC_MSG_CHECKING(for st_gen member in stat structure)
+AC_TRY_COMPILE([#include <sys/stat.h>],[struct stat t;
+	int o = t.st_gen;],
+	AC_MSG_RESULT(yes)
+	AC_DEFINE(HAVE_ST_GEN),
+	AC_MSG_RESULT(no))
+
 dnl See if we have the removefile(3) function for securely removing files
 AC_CHECK_FUNCS(removefile)
 
@@ -192,7 +222,7 @@ else
 fi
 
 if test $check_libusb = yes; then
-	AC_CHECK_LIB(usb, usb_init,[
+	AC_CHECK_LIB(usb, usb_get_string_simple,[
 		AC_CHECK_HEADER(usb.h,
 			AC_DEFINE(HAVE_USB_H)
 			LIBUSB="-lusb")])
@@ -225,9 +255,9 @@ AC_SUBST(ARFLAGS)
 
 dnl Prep libraries specifically for cupsd and backends...
 BACKLIBS=""
-CUPSDLIBS=""
+SERVERLIBS=""
 AC_SUBST(BACKLIBS)
-AC_SUBST(CUPSDLIBS)
+AC_SUBST(SERVERLIBS)
 
 dnl See if we have POSIX ACL support...
 SAVELIBS="$LIBS"
@@ -235,7 +265,7 @@ LIBS=""
 AC_ARG_ENABLE(acl, [  --enable-acl            build with POSIX ACL support])
 if test "x$enable_acl" != xno; then
 	AC_SEARCH_LIBS(acl_init, acl, AC_DEFINE(HAVE_ACL_INIT))
-	CUPSDLIBS="$CUPSDLIBS $LIBS"
+	SERVERLIBS="$SERVERLIBS $LIBS"
 fi
 LIBS="$SAVELIBS"
 
@@ -253,27 +283,22 @@ AC_ARG_WITH(dbusdir, [  --with-dbusdir          set DBUS configuration directory
 DBUS_NOTIFIER=""
 DBUS_NOTIFIERLIBS=""
 
-if test "x$enable_dbus" != xno; then
-	AC_PATH_PROG(PKGCONFIG, pkg-config)
-	if test "x$PKGCONFIG" != x; then
-		AC_MSG_CHECKING(for DBUS)
-		if $PKGCONFIG --exists dbus-1; then
-			AC_MSG_RESULT(yes)
-			AC_DEFINE(HAVE_DBUS)
-			CFLAGS="$CFLAGS `$PKGCONFIG --cflags dbus-1` -DDBUS_API_SUBJECT_TO_CHANGE"
-			CUPSDLIBS="$CUPSDLIBS `$PKGCONFIG --libs dbus-1`"
-			AC_CHECK_LIB(dbus-1,
-				dbus_message_iter_init_append,
-				AC_DEFINE(HAVE_DBUS_MESSAGE_ITER_INIT_APPEND),,
-				`$PKGCONFIG --libs dbus-1`)
-			if $PKGCONFIG --exists glib-2.0 && $PKGCONFIG --exists dbus-glib-1; then
-				DBUS_NOTIFIER="dbus"
-				DBUS_NOTIFIERLIBS="`$PKGCONFIG --libs glib-2.0` `$PKGCONFIG --libs dbus-glib-1` `$PKGCONFIG --libs dbus-1`"
-				CFLAGS="$CFLAGS `$PKGCONFIG --cflags glib-2.0`"
-			fi
-		else
-			AC_MSG_RESULT(no)
-		fi
+if test "x$enable_dbus" != xno -a "x$PKGCONFIG" != x; then
+	AC_MSG_CHECKING(for DBUS)
+	if $PKGCONFIG --exists dbus-1; then
+		AC_MSG_RESULT(yes)
+		AC_DEFINE(HAVE_DBUS)
+		CFLAGS="$CFLAGS `$PKGCONFIG --cflags dbus-1` -DDBUS_API_SUBJECT_TO_CHANGE"
+		SERVERLIBS="$SERVERLIBS `$PKGCONFIG --libs dbus-1`"
+		DBUS_NOTIFIER="dbus"
+		DBUS_NOTIFIERLIBS="`$PKGCONFIG --libs dbus-1`"
+		SAVELIBS="$LIBS"
+		LIBS="$LIBS $DBUS_NOTIFIERLIBS"
+		AC_CHECK_FUNC(dbus_message_iter_init_append,
+			      AC_DEFINE(HAVE_DBUS_MESSAGE_ITER_INIT_APPEND))
+		LIBS="$SAVELIBS"
+	else
+		AC_MSG_RESULT(no)
 	fi
 fi
 
@@ -284,21 +309,31 @@ AC_SUBST(DBUS_NOTIFIERLIBS)
 dnl Extra platform-specific libraries...
 CUPS_DEFAULT_PRINTOPERATOR_AUTH="@SYSTEM"
 CUPS_SYSTEM_AUTHKEY=""
-FONTS="fonts"
-LEGACY_BACKENDS="parallel scsi"
+INSTALLXPC=""
+LEGACY_BACKENDS="parallel"
 
 case $uname in
         Darwin*)
-#		FONTS=""
 		LEGACY_BACKENDS=""
                 BACKLIBS="$BACKLIBS -framework IOKit"
-                CUPSDLIBS="$CUPSDLIBS -sectorder __TEXT __text cupsd.order -e start -framework IOKit -framework SystemConfiguration -weak_framework ApplicationServices"
-                LIBS="-framework SystemConfiguration -framework CoreFoundation $LIBS"
+                SERVERLIBS="$SERVERLIBS -framework IOKit -weak_framework ApplicationServices"
+                LIBS="-framework SystemConfiguration -framework CoreFoundation -framework Security $LIBS"
 
 		dnl Check for framework headers...
+		AC_CHECK_HEADER(ApplicationServices/ApplicationServices.h,AC_DEFINE(HAVE_APPLICATIONSERVICES_H))
 		AC_CHECK_HEADER(CoreFoundation/CoreFoundation.h,AC_DEFINE(HAVE_COREFOUNDATION_H))
 		AC_CHECK_HEADER(CoreFoundation/CFPriv.h,AC_DEFINE(HAVE_CFPRIV_H))
 		AC_CHECK_HEADER(CoreFoundation/CFBundlePriv.h,AC_DEFINE(HAVE_CFBUNDLEPRIV_H))
+		AC_CHECK_HEADER(IOKit/pwr_mgt/IOPMLibPrivate.h,AC_DEFINE(HAVE_IOKIT_PWR_MGT_IOPMLIBPRIVATE_H))
+
+		dnl Check for dynamic store function...
+		AC_CHECK_FUNCS(SCDynamicStoreCopyComputerName)
+
+		dnl Check for new ColorSync APIs...
+		SAVELIBS="$LIBS"
+		LIBS="$LIBS -framework ApplicationServices"
+		AC_CHECK_FUNCS(ColorSyncRegisterDevice)
+		LIBS="$SAVELIBS"
 
 		dnl Check for the new membership functions in MacOSX 10.4...
 		AC_CHECK_HEADER(membership.h,AC_DEFINE(HAVE_MEMBERSHIP_H))
@@ -322,7 +357,7 @@ case $uname in
  		AC_ARG_WITH(operkey, [  --with-operkey          set the default operator @AUTHKEY value],
 			default_operkey="$withval",
 			default_operkey="default")
- 
+
 		AC_CHECK_HEADER(Security/Authorization.h, [
 			AC_DEFINE(HAVE_AUTHORIZATION_H)
 
@@ -344,16 +379,47 @@ case $uname in
 		AC_CHECK_HEADER(Security/SecBasePriv.h,AC_DEFINE(HAVE_SECBASEPRIV_H))
 
 		dnl Check for sandbox/Seatbelt support
-		AC_CHECK_HEADER(sandbox.h,AC_DEFINE(HAVE_SANDBOX_H))
+		if test $uversion -ge 100; then
+		    AC_CHECK_HEADER(sandbox.h,AC_DEFINE(HAVE_SANDBOX_H))
+		fi
+
+		dnl Check for XPC support
+		AC_CHECK_HEADER(xpc/xpc.h,
+			AC_DEFINE(HAVE_XPC)
+			INSTALLXPC="install-xpc")
                 ;;
 esac
 
 AC_SUBST(CUPS_DEFAULT_PRINTOPERATOR_AUTH)
 AC_DEFINE_UNQUOTED(CUPS_DEFAULT_PRINTOPERATOR_AUTH, "$CUPS_DEFAULT_PRINTOPERATOR_AUTH")
 AC_SUBST(CUPS_SYSTEM_AUTHKEY)
-AC_SUBST(FONTS)
+AC_SUBST(INSTALLXPC)
 AC_SUBST(LEGACY_BACKENDS)
 
+dnl Check for build components
+COMPONENTS="all"
+
+AC_ARG_WITH(components, [  --with-components       set components to build:
+			    - "all" (default) builds everything
+			    - "core" builds libcups and ipptool],
+	COMPONENTS="$withval")
+
+case "$COMPONENTS" in
+	all)
+		BUILDDIRS="filter backend berkeley cgi-bin driver monitor notifier ppdc scheduler systemv conf data desktop locale man doc examples templates"
+		;;
+
+	core)
+		BUILDDIRS="data locale"
+		;;
+
+	*)
+		AC_MSG_ERROR([Bad build component "$COMPONENT" specified!])
+		;;
+esac
+
+AC_SUBST(BUILDDIRS)
+
 dnl
-dnl End of "$Id: cups-common.m4 7900 2008-09-03 13:47:57Z mike $".
+dnl End of "$Id: cups-common.m4 8781 2009-08-28 17:34:54Z mike $".
 dnl

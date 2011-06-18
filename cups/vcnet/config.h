@@ -1,9 +1,9 @@
 /*
- * "$Id: config.h 6649 2007-07-11 21:46:42Z mike $"
+ * "$Id: config.h 9306 2010-09-16 21:43:57Z mike $"
  *
- *   Configuration file for the Common UNIX Printing System (CUPS).
+ *   Configuration file for CUPS on Windows.
  *
- *   Copyright 2007-2009 by Apple Inc.
+ *   Copyright 2007-2011 by Apple Inc.
  *   Copyright 1997-2007 by Easy Software Products.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -24,12 +24,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
-#include <ctype.h>
 #include <io.h>
+#include <direct.h>
 
 
 /*
- * Microsoft also renames the POSIX functions to _name, and introduces
+ * Microsoft renames the POSIX functions to _name, and introduces
  * a broken compatibility layer using the original names.  As a result,
  * random crashes can occur when, for example, strdup() allocates memory
  * from a different heap than used by malloc() and free().
@@ -42,13 +42,36 @@
 #define close		_close
 #define fileno		_fileno
 #define lseek		_lseek
+#define mkdir(d,p)	_mkdir(d)
 #define open		_open
 #define read	        _read
+#define rmdir		_rmdir
 #define snprintf 	_snprintf
 #define strdup		_strdup
 #define unlink		_unlink
 #define vsnprintf 	_vsnprintf
 #define write		_write
+
+
+/*
+ * Map the POSIX sleep() and usleep() functions to the Win32 Sleep() function...
+ */
+
+#define sleep(X)	Sleep(1000 * (X))
+#define usleep(X)	Sleep((X)/1000)
+
+
+/*
+ * Map various parameters to Posix style system calls
+ */
+
+#  define F_OK		00
+#  define W_OK		02
+#  define R_OK		04
+#  define O_RDONLY	_O_RDONLY
+#  define O_WRONLY	_O_WRONLY
+#  define O_CREATE	_O_CREAT
+#  define O_TRUNC	_O_TRUNC
 
 
 /*
@@ -63,18 +86,18 @@
  * Version of software...
  */
 
-#define CUPS_SVERSION "CUPS v1.4b3"
-#define CUPS_MINIMAL "CUPS/1.4b3"
+#define CUPS_SVERSION "CUPS v1.5.0"
+#define CUPS_MINIMAL "CUPS/1.5.0"
 
 
 /*
  * Default user and groups...
  */
 
-#define CUPS_DEFAULT_USER	"lp"
-#define CUPS_DEFAULT_GROUP	"sys"
-#define CUPS_DEFAULT_SYSTEM_GROUPS "admin"
-#define CUPS_DEFAULT_PRINTOPERATOR_AUTH "@admin @lpadmin"
+#define CUPS_DEFAULT_USER	""
+#define CUPS_DEFAULT_GROUP	""
+#define CUPS_DEFAULT_SYSTEM_GROUPS ""
+#define CUPS_DEFAULT_PRINTOPERATOR_AUTH ""
 
 
 /*
@@ -208,6 +231,13 @@
 
 
 /*
+ * Do we have <scsi/sg.h>?
+ */
+
+/* #undef HAVE_SCSI_SG_H */
+
+
+/*
  * Use <string.h>, <strings.h>, and/or <bstring.h>?
  */
 
@@ -246,9 +276,7 @@
  * Do we have the strXXX() functions?
  */
 
-#define HAVE_STRDUP
-#define HAVE_STRCASECMP
-#define HAVE_STRNCASECMP
+#define HAVE_STRDUP 1
 /* #undef HAVE_STRLCAT */
 /* #undef HAVE_STRLCPY */
 
@@ -258,6 +286,13 @@
  */
 
 /* #undef HAVE_GETEUID */
+
+
+/*
+ * Do we have the setpgid() function?
+ */
+
+/* #undef HAVE_SETPGID */
 
 
 /*
@@ -320,7 +355,8 @@
 /* #undef HAVE_CDSASSL */
 /* #undef HAVE_GNUTLS */
 /* #undef HAVE_LIBSSL */
-/* #undef HAVE_SSL */
+#define HAVE_SSPISSL
+#define HAVE_SSL
 
 
 /*
@@ -339,6 +375,27 @@
  */
 
 /* #undef HAVE_SECIDENTITYSEARCHCREATEWITHPOLICY */
+
+
+/*
+ * Do we have the SecPolicyCreateSSL function?
+ */
+
+/* #undef HAVE_SECPOLICYCREATESSL */
+
+
+/*
+ * Do we have the SecPolicyCreateSSL function?
+ */
+
+/* #undef HAVE_SECPOLICYCREATESSL */
+
+
+/*
+ * Do we have the cssmErrorString function?
+ */
+
+/* #undef HAVE_CSSMERRORSTRING */
 
 
 /*
@@ -371,7 +428,14 @@
  * Do we have DNS Service Discovery (aka Bonjour)?
  */
 
-/* #undef HAVE_DNSSD */
+#define HAVE_DNSSD 1
+
+
+/*
+ * Does the "stat" structure contain the "st_gen" member?
+ */
+
+/* #undef HAVE_ST_GEN */
 
 
 /*
@@ -471,7 +535,6 @@
 
 /* #undef HAVE_LAUNCH_H */
 /* #undef HAVE_LAUNCHD */
-#define CUPS_DEFAULT_LAUNCHD_CONF ""
 
 
 /*
@@ -522,7 +585,21 @@
 
 
 /*
- * Do we have MacOSX 10.4's mbr_XXX functions()?
+ * Do we have ApplicationServices public headers?
+ */
+
+/* #undef HAVE_APPLICATIONSERVICES_H */
+
+
+/*
+ * Do we have the SCDynamicStoreCopyComputerName function?
+ */
+
+/* #undef HAVE_SCDYNAMICSTORECOPYCOMPUTERNAME */
+
+
+/*
+ * Do we have Mac OS X 10.4's mbr_XXX functions?
  */
 
 /* #undef HAVE_MEMBERSHIP_H */
@@ -531,11 +608,18 @@
 
 
 /*
- * Do we have Darwin's notify_post() header and function?
+ * Do we have Darwin's notify_post header and function?
  */
 
 /* #undef HAVE_NOTIFY_H */
 /* #undef HAVE_NOTIFY_POST */
+
+
+/*
+ * Do we have Darwin's IOKit private headers?
+ */
+
+/* #undef HAVE_IOKIT_PWR_MGT_IOPMLIBPRIVATE_H */
 
 
 /*
@@ -547,34 +631,26 @@
 
 
 /*
- * Do we have the AppleTalk/at_proto.h header?
- */
-
-/* #undef HAVE_APPLETALK_AT_PROTO_H */
-
-
-/*
  * Do we have the GSSAPI support library (for Kerberos support)?
  */
 
-/* #undef HAVE_GSSAPI */
-/* #undef HAVE_GSSAPI_H */
-/* #undef HAVE_GSSAPI_GSSAPI_H */
-/* #undef HAVE_GSSAPI_GSSAPI_GENERIC_H */
-/* #undef HAVE_GSSAPI_GSSAPI_KRB5_H */
-/* #undef HAVE_GSSKRB5_REGISTER_ACCEPTOR_IDENTITY */
+/* #undef HAVE_GSS_ACQUIRE_CRED_EX_F */
 /* #undef HAVE_GSS_C_NT_HOSTBASED_SERVICE */
-/* #undef HAVE_KRB5_CC_NEW_UNIQUE */
-/* #undef HAVE_KRB5_IPC_CLIENT_SET_TARGET_UID */
+/* #undef HAVE_GSS_GSSAPI_H */
+/* #undef HAVE_GSS_GSSAPI_SPI_H */
+/* #undef HAVE_GSSAPI */
+/* #undef HAVE_GSSAPI_GENERIC_H */
+/* #undef HAVE_GSSAPI_GSSAPI_H */
+/* #undef HAVE_GSSAPI_H */
+/* #undef HAVE_GSSAPI_KRB5_H */
 /* #undef HAVE_KRB5_H */
-/* #undef HAVE_HEIMDAL */
 
 
 /*
  * Default GSS service name...
  */
 
-#define CUPS_DEFAULT_GSSSERVICENAME "ipp"
+#define CUPS_DEFAULT_GSSSERVICENAME "host"
 
 
 /*
@@ -625,9 +701,23 @@
  * Which random number generator function to use...
  */
 
+/* #undef HAVE_ARC4RANDOM */
 /* #undef HAVE_RANDOM */
-/* #undef HAVE_MRAND48 */
 /* #undef HAVE_LRAND48 */
+
+#ifdef HAVE_ARC4RANDOM
+#  define CUPS_RAND() arc4random()
+#  define CUPS_SRAND(v) arc4random_stir()
+#elif defined(HAVE_RANDOM)
+#  define CUPS_RAND() random()
+#  define CUPS_SRAND(v) srandom(v)
+#elif defined(HAVE_LRAND48)
+#  define CUPS_RAND() lrand48()
+#  define CUPS_SRAND(v) srand48(v)
+#else
+#  define CUPS_RAND() rand()
+#  define CUPS_SRAND(v) srand(v)
+#endif /* HAVE_ARC4RANDOM */
 
 
 /*
@@ -651,8 +741,48 @@
 /* #undef HAVE_TCPD_H */
 
 
+/*
+ * Do we have <iconv.h>?
+ */
+
+/* #undef HAVE_ICONV_H */
+
+
+/*
+ * Do we have statfs or statvfs and one of the corresponding headers?
+ */
+
+/* #undef HAVE_STATFS */
+/* #undef HAVE_STATVFS */
+/* #undef HAVE_SYS_MOUNT_H */
+/* #undef HAVE_SYS_STATFS_H */
+/* #undef HAVE_SYS_STATVFS_H */
+/* #undef HAVE_SYS_VFS_H */
+
+
+/*
+ * Location of Mac OS X localization bundle, if any.
+ */
+
+/* #undef CUPS_BUNDLEDIR */
+
+
+/*
+ * Do we have the ColorSyncRegisterDevice function?
+ */
+
+/* #undef HAVE_COLORSYNCREGISTERDEVICE */
+
+
+/*
+ * Do we have XPC?
+ */
+
+/* #undef HAVE_XPC */
+
+
 #endif /* !_CUPS_CONFIG_H_ */
 
 /*
- * End of "$Id: config.h 6649 2007-07-11 21:46:42Z mike $".
+ * End of "$Id: config.h 9306 2010-09-16 21:43:57Z mike $".
  */

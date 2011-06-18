@@ -1,10 +1,9 @@
 /*
- * "$Id: attr.c 7584 2008-05-16 22:55:53Z mike $"
+ * "$Id: attr.c 9042 2010-03-24 00:45:34Z mike $"
  *
- *   PPD model-specific attribute routines for the Common UNIX Printing System
- *   (CUPS).
+ *   PPD model-specific attribute routines for CUPS.
  *
- *   Copyright 2007-2009 by Apple Inc.
+ *   Copyright 2007-2011 by Apple Inc.
  *   Copyright 1997-2006 by Easy Software Products.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -15,18 +14,17 @@
  *
  * Contents:
  *
- *   ppdFindAttr()     - Find the first matching attribute.
- *   ppdFindNextAttr() - Find the next matching attribute.
+ *   ppdFindAttr()               - Find the first matching attribute.
+ *   ppdFindNextAttr()           - Find the next matching attribute.
+ *   _ppdNormalizeMakeAndModel() - Normalize a product/make-and-model string.
  */
 
 /*
  * Include necessary headers...
  */
 
+#include "cups-private.h"
 #include "ppd-private.h"
-#include "debug.h"
-#include "string.h"
-#include <stdlib.h>
 
 
 /*
@@ -73,10 +71,10 @@ ppdFindAttr(ppd_file_t *ppd,		/* I - PPD file data */
       * Loop until we find the first matching attribute for "spec"...
       */
 
-      while (attr && strcasecmp(spec, attr->spec))
+      while (attr && _cups_strcasecmp(spec, attr->spec))
       {
         if ((attr = (ppd_attr_t *)cupsArrayNext(ppd->sorted_attrs)) != NULL &&
-	    strcasecmp(attr->name, name))
+	    _cups_strcasecmp(attr->name, name))
 	  attr = NULL;
       }
     }
@@ -117,7 +115,7 @@ ppdFindNextAttr(ppd_file_t *ppd,	/* I - PPD file data */
     * Check the next attribute to see if it is a match...
     */
 
-    if (strcasecmp(attr->name, name))
+    if (_cups_strcasecmp(attr->name, name))
     {
      /*
       * Nope, reset the current pointer to the end of the array...
@@ -128,7 +126,7 @@ ppdFindNextAttr(ppd_file_t *ppd,	/* I - PPD file data */
       return (NULL);
     }
 
-    if (!spec || !strcasecmp(attr->spec, spec))
+    if (!spec || !_cups_strcasecmp(attr->spec, spec))
       break;
   }
 
@@ -137,89 +135,6 @@ ppdFindNextAttr(ppd_file_t *ppd,	/* I - PPD file data */
   */
 
   return (attr);
-}
-
-
-/*
- * '_ppdGet1284Values()' - Get 1284 device ID keys and values.
- *
- * The returned dictionary is a CUPS option array that can be queried with
- * cupsGetOption and freed with cupsFreeOptions.
- */
-
-int					/* O - Number of key/value pairs */
-_ppdGet1284Values(
-    const char *device_id,		/* I - IEEE-1284 device ID string */
-    cups_option_t **values)		/* O - Array of key/value pairs */
-{
-  int		num_values;		/* Number of values */
-  char		key[256],		/* Key string */
-		value[256],		/* Value string */
-		*ptr;			/* Pointer into key/value */
-
-
- /*
-  * Range check input...
-  */
-
-  if (values)
-    *values = NULL;
-
-  if (!device_id || !values)
-    return (0);
-
- /*
-  * Parse the 1284 device ID value into keys and values.  The format is
-  * repeating sequences of:
-  *
-  *   [whitespace]key:value[whitespace];
-  */
-
-  num_values = 0;
-  while (*device_id)
-  {
-    while (isspace(*device_id & 255))
-      device_id ++;
-
-    if (!*device_id)
-      break;
-
-    for (ptr = key; *device_id && *device_id != ':'; device_id ++)
-      if (ptr < (key + sizeof(key) - 1))
-        *ptr++ = *device_id;
-
-    if (!*device_id)
-      break;
-
-    while (ptr > key && isspace(ptr[-1] & 255))
-      ptr --;
-
-    *ptr = '\0';
-    device_id ++;
-
-    while (isspace(*device_id & 255))
-      device_id ++;
-
-    if (!*device_id)
-      break;
-
-    for (ptr = value; *device_id && *device_id != ';'; device_id ++)
-      if (ptr < (value + sizeof(value) - 1))
-        *ptr++ = *device_id;
-
-    if (!*device_id)
-      break;
-
-    while (ptr > value && isspace(ptr[-1] & 255))
-      ptr --;
-
-    *ptr = '\0';
-    device_id ++;
-
-    num_values = cupsAddOption(key, value, num_values, values);
-  }
-
-  return (num_values);
 }
 
 
@@ -251,7 +166,7 @@ _ppdNormalizeMakeAndModel(
   * Skip leading whitespace...
   */
 
-  while (isspace(*make_and_model & 255))
+  while (_cups_isspace(*make_and_model))
     make_and_model ++;
 
  /*
@@ -265,7 +180,7 @@ _ppdNormalizeMakeAndModel(
     if ((bufptr = strrchr(buffer, ')')) != NULL)
       *bufptr = '\0';
   }
-  else if (!strncasecmp(make_and_model, "XPrint", 6))
+  else if (!_cups_strncasecmp(make_and_model, "XPrint", 6))
   {
    /*
     * Xerox XPrint...
@@ -273,7 +188,7 @@ _ppdNormalizeMakeAndModel(
 
     snprintf(buffer, bufsize, "Xerox %s", make_and_model);
   }
-  else if (!strncasecmp(make_and_model, "Eastman", 7))
+  else if (!_cups_strncasecmp(make_and_model, "Eastman", 7))
   {
    /*
     * Kodak...
@@ -281,7 +196,7 @@ _ppdNormalizeMakeAndModel(
 
     snprintf(buffer, bufsize, "Kodak %s", make_and_model + 7);
   }
-  else if (!strncasecmp(make_and_model, "laserwriter", 11))
+  else if (!_cups_strncasecmp(make_and_model, "laserwriter", 11))
   {
    /*
     * Apple LaserWriter...
@@ -289,7 +204,7 @@ _ppdNormalizeMakeAndModel(
 
     snprintf(buffer, bufsize, "Apple LaserWriter%s", make_and_model + 11);
   }
-  else if (!strncasecmp(make_and_model, "colorpoint", 10))
+  else if (!_cups_strncasecmp(make_and_model, "colorpoint", 10))
   {
    /*
     * Seiko...
@@ -297,7 +212,7 @@ _ppdNormalizeMakeAndModel(
 
     snprintf(buffer, bufsize, "Seiko %s", make_and_model);
   }
-  else if (!strncasecmp(make_and_model, "fiery", 5))
+  else if (!_cups_strncasecmp(make_and_model, "fiery", 5))
   {
    /*
     * EFI...
@@ -305,8 +220,8 @@ _ppdNormalizeMakeAndModel(
 
     snprintf(buffer, bufsize, "EFI %s", make_and_model);
   }
-  else if (!strncasecmp(make_and_model, "ps ", 3) ||
-	   !strncasecmp(make_and_model, "colorpass", 9))
+  else if (!_cups_strncasecmp(make_and_model, "ps ", 3) ||
+	   !_cups_strncasecmp(make_and_model, "colorpass", 9))
   {
    /*
     * Canon...
@@ -314,7 +229,7 @@ _ppdNormalizeMakeAndModel(
 
     snprintf(buffer, bufsize, "Canon %s", make_and_model);
   }
-  else if (!strncasecmp(make_and_model, "primera", 7))
+  else if (!_cups_strncasecmp(make_and_model, "primera", 7))
   {
    /*
     * Fargo...
@@ -322,8 +237,8 @@ _ppdNormalizeMakeAndModel(
 
     snprintf(buffer, bufsize, "Fargo %s", make_and_model);
   }
-  else if (!strncasecmp(make_and_model, "designjet", 9) ||
-           !strncasecmp(make_and_model, "deskjet", 7))
+  else if (!_cups_strncasecmp(make_and_model, "designjet", 9) ||
+           !_cups_strncasecmp(make_and_model, "deskjet", 7))
   {
    /*
     * HP...
@@ -338,7 +253,7 @@ _ppdNormalizeMakeAndModel(
   * Clean up the make...
   */
 
-  if (!strncasecmp(buffer, "agfa", 4))
+  if (!_cups_strncasecmp(buffer, "agfa", 4))
   {
    /*
     * Replace with AGFA (all uppercase)...
@@ -349,7 +264,7 @@ _ppdNormalizeMakeAndModel(
     buffer[2] = 'F';
     buffer[3] = 'A';
   }
-  else if (!strncasecmp(buffer, "Hewlett-Packard hp ", 19))
+  else if (!_cups_strncasecmp(buffer, "Hewlett-Packard hp ", 19))
   {
    /*
     * Just put "HP" on the front...
@@ -359,7 +274,7 @@ _ppdNormalizeMakeAndModel(
     buffer[1] = 'P';
     _cups_strcpy(buffer + 2, buffer + 18);
   }
-  else if (!strncasecmp(buffer, "Hewlett-Packard ", 16))
+  else if (!_cups_strncasecmp(buffer, "Hewlett-Packard ", 16))
   {
    /*
     * Just put "HP" on the front...
@@ -369,7 +284,7 @@ _ppdNormalizeMakeAndModel(
     buffer[1] = 'P';
     _cups_strcpy(buffer + 2, buffer + 15);
   }
-  else if (!strncasecmp(buffer, "Lexmark International", 21))
+  else if (!_cups_strncasecmp(buffer, "Lexmark International", 21))
   {
    /*
     * Strip "International"...
@@ -377,7 +292,7 @@ _ppdNormalizeMakeAndModel(
 
     _cups_strcpy(buffer + 8, buffer + 21);
   }
-  else if (!strncasecmp(buffer, "herk", 4))
+  else if (!_cups_strncasecmp(buffer, "herk", 4))
   {
    /*
     * Replace with LHAG...
@@ -388,7 +303,7 @@ _ppdNormalizeMakeAndModel(
     buffer[2] = 'A';
     buffer[3] = 'G';
   }
-  else if (!strncasecmp(buffer, "linotype", 8))
+  else if (!_cups_strncasecmp(buffer, "linotype", 8))
   {
    /*
     * Replace with LHAG...
@@ -406,7 +321,7 @@ _ppdNormalizeMakeAndModel(
   */
 
   for (bufptr = buffer + strlen(buffer) - 1;
-       bufptr >= buffer && isspace(*bufptr & 255);
+       bufptr >= buffer && _cups_isspace(*bufptr);
        bufptr --);
 
   bufptr[1] = '\0';
@@ -416,5 +331,5 @@ _ppdNormalizeMakeAndModel(
 
 
 /*
- * End of "$Id: attr.c 7584 2008-05-16 22:55:53Z mike $".
+ * End of "$Id: attr.c 9042 2010-03-24 00:45:34Z mike $".
  */

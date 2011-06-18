@@ -1,9 +1,9 @@
 #
-# "$Id: Makefile 1558 2009-06-10 19:21:50Z msweet $"
+# "$Id: Makefile 1844 2010-01-27 00:00:11Z msweet $"
 #
 #   Makefile for the CUPS base drivers.
 #
-#   Copyright 2007-2009 by Apple Inc.
+#   Copyright 2007-2010 by Apple Inc.
 #   Copyright 2002-2005 by Easy Software Products.
 #
 #   These coded instructions, statements, and computer programs are the
@@ -51,12 +51,14 @@ UNITTARGETS =	\
 		testcmyk \
 		testdither \
 		testrgb
-TARGETS =	\
-		$(LIBTARGETS) \
+FILTERS =	\
 		commandtoescpx \
 		commandtopclx \
 		rastertoescpx \
 		rastertopclx
+TARGETS =	\
+		$(LIBTARGETS) \
+		$(FILTERS)
 
 
 #
@@ -120,12 +122,12 @@ install-data:
 
 install-exec:
 	$(INSTALL_DIR) $(SERVERBIN)/filter
-	for file in commandtoescpx commandtopclx rastertoescpx rastertopclx; do \
+	for file in $(FILTERS); do \
 		$(INSTALL_BIN) $$file $(SERVERBIN)/filter; \
 	done
 	if test "x$(SYMROOT)" != "x"; then \
 		$(INSTALL_DIR) $(SYMROOT); \
-		for file in commandtoescpx commandtopclx rastertoescpx rastertopclx; do \
+		for file in $(FILTERS); do \
 			cp $$file $(SYMROOT); \
 		done \
 	fi
@@ -267,10 +269,10 @@ test:
 # testcmyk, test cmyk separation functions.
 #
 
-testcmyk:		test testcmyk.o libcupsdriver.a ../cups/libcups.a
+testcmyk:		test testcmyk.o libcupsdriver.a ../cups/$(LIBCUPSSTATIC)
 	echo Linking $@...
 	$(CC) $(ARCHFLAGS) $(LDFLAGS) -o $@ testcmyk.o libcupsdriver.a \
-		../cups/libcups.a $(LIBGSSAPI) $(SSLLIBS) $(DNSSDLIBS) \
+		../cups/$(LIBCUPSSTATIC) $(LIBGSSAPI) $(SSLLIBS) $(DNSSDLIBS) \
 		$(COMMONLIBS) $(LIBZ)
 	echo Running CMYK API tests...
 	./testcmyk > test/testcmyk.log
@@ -280,10 +282,10 @@ testcmyk:		test testcmyk.o libcupsdriver.a ../cups/libcups.a
 # testdither, test dithering functions.
 #
 
-testdither:		test testdither.o libcupsdriver.a ../cups/libcups.a
+testdither:		test testdither.o libcupsdriver.a ../cups/$(LIBCUPSSTATIC)
 	echo Linking $@...
 	$(CC) $(ARCHFLAGS) $(LDFLAGS) -o $@ testdither.o libcupsdriver.a \
-		../cups/libcups.a $(LIBGSSAPI) $(SSLLIBS) $(DNSSDLIBS) \
+		../cups/$(LIBCUPSSTATIC) $(LIBGSSAPI) $(SSLLIBS) $(DNSSDLIBS) \
 		$(COMMONLIBS) $(LIBZ)
 	echo Running dither API tests...
 	./testdither > test/0-255.pgm 2>test/0-255.log
@@ -300,10 +302,10 @@ testdither:		test testdither.o libcupsdriver.a ../cups/libcups.a
 # testrgb, test RGB separation functions.
 #
 
-testrgb:		test testrgb.o libcupsdriver.a ../cups/libcups.a
+testrgb:		test testrgb.o libcupsdriver.a ../cups/$(LIBCUPSSTATIC)
 	echo Linking $@...
 	$(CC) $(ARCHFLAGS) $(LDFLAGS) -o $@ testrgb.o libcupsdriver.a \
-		../cups/libcups.a $(LIBGSSAPI) $(SSLLIBS) $(DNSSDLIBS) \
+		../cups/$(LIBCUPSSTATIC) $(LIBGSSAPI) $(SSLLIBS) $(DNSSDLIBS) \
 		$(COMMONLIBS) $(LIBZ)
 	echo Running RGB API tests...
 	./testrgb > test/testrgb.log 2>&1 || echo "RGB tests failed!"
@@ -376,5 +378,5 @@ include Dependencies
 
 
 #
-# End of "$Id: Makefile 1558 2009-06-10 19:21:50Z msweet $".
+# End of "$Id: Makefile 1844 2010-01-27 00:00:11Z msweet $".
 #

@@ -1,10 +1,9 @@
 /*
- * "$Id: dest.c 7946 2008-09-16 23:27:54Z mike $"
+ * "$Id: dest.c 9568 2011-02-25 06:13:56Z mike $"
  *
- *   User-defined destination (and option) support for the Common UNIX
- *   Printing System (CUPS).
+ *   User-defined destination (and option) support for CUPS.
  *
- *   Copyright 2007-2009 by Apple Inc.
+ *   Copyright 2007-2011 by Apple Inc.
  *   Copyright 1997-2007 by Easy Software Products.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -17,46 +16,53 @@
  *
  * Contents:
  *
- *   cupsAddDest()         - Add a destination to the list of destinations.
- *   cupsFreeDests()       - Free the memory used by the list of destinations.
- *   cupsGetDest()         - Get the named destination from the list.
- *   cupsGetDests()        - Get the list of destinations from the default
- *                           server.
- *   cupsGetDests2()       - Get the list of destinations from the specified
- *                           server.
- *   cupsGetNamedDest()    - Get options for the named destination.
- *   cupsRemoveDest()      - Remove a destination from the destination list.
- *   cupsSetDefaultDest()  - Set the default destination.
- *   cupsSetDests()        - Save the list of destinations for the default
- *                           server.
- *   cupsSetDests2()       - Save the list of destinations for the specified
- *                           server.
- *   appleCopyLocations()  - Copy the location history array.
- *   appleCopyNetwork()    - Get the network ID for the current location.
- *   appleGetDefault()     - Get the default printer for this location.
- *   appleGetPaperSize()   - Get the default paper size.
- *   appleGetPrinter()     - Get a printer from the history array.
- *   appleSetDefault()     - Set the default printer for this location.
- *   appleUseLastPrinter() - Get the default printer preference value.
- *   cups_add_dest()       - Add a destination to the array.
- *   cups_compare_dests()  - Compare two destinations.
- *   cups_find_dest()      - Find a destination using a binary search.
- *   cups_get_default()    - Get the default destination from an lpoptions file.
- *   cups_get_dests()      - Get destinations from a file.
- *   cups_get_sdests()     - Get destinations from a server.
- *   cups_make_string()    - Make a comma-separated string of values from an IPP
- *                           attribute.
+ *   cupsAddDest()                  - Add a destination to the list of
+ *                                    destinations.
+ *   _cupsAppleCopyDefaultPaperID() - Get the default paper ID.
+ *   _cupsAppleCopyDefaultPrinter() - Get the default printer at this location.
+ *   _cupsAppleGetUseLastPrinter()  - Get whether to use the last used printer.
+ *   _cupsAppleSetDefaultPaperID()  - Set the default paper id.
+ *   _cupsAppleSetDefaultPrinter()  - Set the default printer for this location.
+ *   _cupsAppleSetUseLastPrinter()  - Set whether to use the last used printer.
+ *   cupsFreeDests()                - Free the memory used by the list of
+ *                                    destinations.
+ *   cupsGetDest()                  - Get the named destination from the list.
+ *   _cupsGetDests()                - Get destinations from a server.
+ *   cupsGetDests()                 - Get the list of destinations from the
+ *                                    default server.
+ *   cupsGetDests2()                - Get the list of destinations from the
+ *                                    specified server.
+ *   cupsGetNamedDest()             - Get options for the named destination.
+ *   cupsRemoveDest()               - Remove a destination from the destination
+ *                                    list.
+ *   cupsSetDefaultDest()           - Set the default destination.
+ *   cupsSetDests()                 - Save the list of destinations for the
+ *                                    default server.
+ *   cupsSetDests2()                - Save the list of destinations for the
+ *                                    specified server.
+ *   _cupsUserDefault()             - Get the user default printer from
+ *                                    environment variables and location
+ *                                    information.
+ *   appleCopyLocations()           - Copy the location history array.
+ *   appleCopyNetwork()             - Get the network ID for the current
+ *                                    location.
+ *   appleGetPaperSize()            - Get the default paper size.
+ *   appleGetPrinter()              - Get a printer from the history array.
+ *   cups_add_dest()                - Add a destination to the array.
+ *   cups_compare_dests()           - Compare two destinations.
+ *   cups_find_dest()               - Find a destination using a binary search.
+ *   cups_get_default()             - Get the default destination from an
+ *                                    lpoptions file.
+ *   cups_get_dests()               - Get destinations from a file.
+ *   cups_make_string()             - Make a comma-separated string of values
+ *                                    from an IPP attribute.
  */
 
 /*
  * Include necessary headers...
  */
 
-#include "debug.h"
-#include "globals.h"
-#include "pwgmedia.h"
-#include <stdlib.h>
-#include <ctype.h>
+#include "cups-private.h"
 #include <sys/stat.h>
 
 #ifdef HAVE_NOTIFY_H
@@ -64,15 +70,13 @@
 #endif /* HAVE_NOTIFY_H */
 
 #ifdef __APPLE__
-#  include <sys/cdefs.h>
-#  include <CoreFoundation/CoreFoundation.h>
 #  include <SystemConfiguration/SystemConfiguration.h>
-#  define kDefaultPaperIDKey CFSTR("DefaultPaperID")
-#  define kLocationHistoryArrayKey CFSTR("kLocationHistoryArrayKeyTMP")
-#  define kLocationNetworkKey CFSTR("kLocationNetworkKey")
-#  define kLocationPrinterIDKey CFSTR("kLocationPrinterIDKey")
-#  define kPMPrintingPreferences CFSTR("com.apple.print.PrintingPrefs")
-#  define kUseLastPrinterAsCurrentPrinterKey CFSTR("UseLastPrinterAsCurrentPrinter")
+#  define kCUPSPrintingPrefs	CFSTR("org.cups.PrintingPrefs")
+#  define kDefaultPaperIDKey	CFSTR("DefaultPaperID")
+#  define kLastUsedPrintersKey	CFSTR("LastUsedPrinters")
+#  define kLocationNetworkKey	CFSTR("Network")
+#  define kLocationPrinterIDKey	CFSTR("PrinterID")
+#  define kUseLastPrinter	CFSTR("UseLastPrinter")
 #endif /* __APPLE__ */
 
 
@@ -86,8 +90,6 @@ static CFStringRef appleCopyNetwork(void);
 static char	*appleGetPaperSize(char *name, int namesize);
 static CFStringRef appleGetPrinter(CFArrayRef locations, CFStringRef network,
 		                   CFIndex *locindex);
-static void	appleSetDefault(const char *name);
-static int	appleUseLastPrinter(void);
 #endif /* __APPLE__ */
 static cups_dest_t *cups_add_dest(const char *name, const char *instance,
 		                  int *num_dests, cups_dest_t **dests);
@@ -100,8 +102,6 @@ static char	*cups_get_default(const char *filename, char *namebuf,
 static int	cups_get_dests(const char *filename, const char *match_name,
 		               const char *match_inst, int user_default_set,
 			       int num_dests, cups_dest_t **dests);
-static int	cups_get_sdests(http_t *http, ipp_op_t op, const char *name,
-		                int num_dests, cups_dest_t **dests);
 static char	*cups_make_string(ipp_attribute_t *attr, char *buffer,
 		                  size_t bufsize);
 
@@ -139,11 +139,16 @@ cupsAddDest(const char  *name,		/* I  - Destination name */
 
   if (!cupsGetDest(name, instance, num_dests, *dests))
   {
-    if (instance &&
-        (parent = cupsGetDest(name, NULL, num_dests, *dests)) == NULL)
+    if (instance && !cupsGetDest(name, NULL, num_dests, *dests))
       return (num_dests);
 
     dest = cups_add_dest(name, instance, &num_dests, dests);
+
+   /*
+    * Find the base dest again now the array has been realloc'd.
+    */
+
+    parent = cupsGetDest(name, NULL, num_dests, *dests);
 
     if (instance && parent && parent->num_options > 0)
     {
@@ -171,6 +176,246 @@ cupsAddDest(const char  *name,		/* I  - Destination name */
 
   return (num_dests);
 }
+
+
+#ifdef __APPLE__
+/*
+ * '_cupsAppleCopyDefaultPaperID()' - Get the default paper ID.
+ */
+
+CFStringRef				/* O - Default paper ID */
+_cupsAppleCopyDefaultPaperID(void)
+{
+  return (CFPreferencesCopyAppValue(kDefaultPaperIDKey,
+                                    kCUPSPrintingPrefs));
+}
+
+
+/*
+ * '_cupsAppleCopyDefaultPrinter()' - Get the default printer at this location.
+ */
+
+CFStringRef				/* O - Default printer name */
+_cupsAppleCopyDefaultPrinter(void)
+{
+  CFStringRef	network;		/* Network location */
+  CFArrayRef	locations;		/* Location array */
+  CFStringRef	locprinter;		/* Current printer */
+
+
+ /*
+  * Use location-based defaults only if "use last printer" is selected in the
+  * system preferences...
+  */
+
+  if (!_cupsAppleGetUseLastPrinter())
+  {
+    DEBUG_puts("1_cupsAppleCopyDefaultPrinter: Not using last printer as "
+	       "default.");
+    return (NULL);
+  }
+
+ /*
+  * Get the current location...
+  */
+
+  if ((network = appleCopyNetwork()) == NULL)
+  {
+    DEBUG_puts("1_cupsAppleCopyDefaultPrinter: Unable to get current "
+               "network.");
+    return (NULL);
+  }
+
+//#  ifdef DEBUG
+//  CFStringGetCString(network, name, namesize, kCFStringEncodingUTF8);
+//  DEBUG_printf(("2_cupsUserDefault: network=\"%s\"", name));
+//#  endif /* DEBUG */
+
+ /*
+  * Lookup the network in the preferences...
+  */
+
+  if ((locations = appleCopyLocations()) == NULL)
+  {
+   /*
+    * Missing or bad location array, so no location-based default...
+    */
+
+    DEBUG_puts("1_cupsAppleCopyDefaultPrinter: Missing or bad last used "
+	       "printer array.");
+
+    CFRelease(network);
+
+    return (NULL);
+  }
+
+  DEBUG_printf(("1_cupsAppleCopyDefaultPrinter: Got locations, %d entries.",
+                (int)CFArrayGetCount(locations)));
+
+  if ((locprinter = appleGetPrinter(locations, network, NULL)) != NULL)
+    CFRetain(locprinter);
+
+  CFRelease(network);
+  CFRelease(locations);
+
+  return (locprinter);
+}
+
+
+/*
+ * '_cupsAppleGetUseLastPrinter()' - Get whether to use the last used printer.
+ */
+
+int					/* O - 1 to use last printer, 0 otherwise */
+_cupsAppleGetUseLastPrinter(void)
+{
+  Boolean	uselast,		/* Use last printer preference value */
+		uselast_set;		/* Valid is set? */
+
+
+  if (getenv("CUPS_DISABLE_APPLE_DEFAULT"))
+    return (0);
+
+  uselast = CFPreferencesGetAppBooleanValue(kUseLastPrinter,
+                                            kCUPSPrintingPrefs,
+					    &uselast_set);
+  if (!uselast_set)
+    return (1);
+  else
+    return (uselast);
+}
+
+
+/*
+ * '_cupsAppleSetDefaultPaperID()' - Set the default paper id.
+ */
+
+void
+_cupsAppleSetDefaultPaperID(
+    CFStringRef name)			/* I - New paper ID */
+{
+  CFPreferencesSetAppValue(kDefaultPaperIDKey, name, kCUPSPrintingPrefs);
+  CFPreferencesAppSynchronize(kCUPSPrintingPrefs);
+  notify_post("com.apple.printerPrefsChange");
+}
+
+
+/*
+ * '_cupsAppleSetDefaultPrinter()' - Set the default printer for this location.
+ */
+
+void
+_cupsAppleSetDefaultPrinter(
+    CFStringRef name)			/* I - Default printer/class name */
+{
+  CFStringRef		network;	/* Current network */
+  CFArrayRef		locations;	/* Old locations array */
+  CFIndex		locindex;	/* Index in locations array */
+  CFStringRef		locprinter;	/* Current printer */
+  CFMutableArrayRef	newlocations;	/* New locations array */
+  CFMutableDictionaryRef newlocation;	/* New location */
+
+
+ /*
+  * Get the current location...
+  */
+
+  if ((network = appleCopyNetwork()) == NULL)
+  {
+    DEBUG_puts("1_cupsAppleSetDefaultPrinter: Unable to get current network...");
+    return;
+  }
+
+ /*
+  * Lookup the network in the preferences...
+  */
+
+  if ((locations = appleCopyLocations()) != NULL)
+    locprinter = appleGetPrinter(locations, network, &locindex);
+  else
+  {
+    locprinter = NULL;
+    locindex   = -1;
+  }
+
+  if (!locprinter || CFStringCompare(locprinter, name, 0) != kCFCompareEqualTo)
+  {
+   /*
+    * Need to change the locations array...
+    */
+
+    if (locations)
+    {
+      newlocations = CFArrayCreateMutableCopy(kCFAllocatorDefault, 0,
+                                              locations);
+
+      if (locprinter)
+        CFArrayRemoveValueAtIndex(newlocations, locindex);
+    }
+    else
+      newlocations = CFArrayCreateMutable(kCFAllocatorDefault, 0,
+					  &kCFTypeArrayCallBacks);
+
+    newlocation = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+					    &kCFTypeDictionaryKeyCallBacks,
+					    &kCFTypeDictionaryValueCallBacks);
+
+    if (newlocation && newlocations)
+    {
+     /*
+      * Put the new location at the front of the array...
+      */
+
+      CFDictionaryAddValue(newlocation, kLocationNetworkKey, network);
+      CFDictionaryAddValue(newlocation, kLocationPrinterIDKey, name);
+      CFArrayInsertValueAtIndex(newlocations, 0, newlocation);
+
+     /*
+      * Limit the number of locations to 10...
+      */
+
+      while (CFArrayGetCount(newlocations) > 10)
+        CFArrayRemoveValueAtIndex(newlocations, 10);
+
+     /*
+      * Push the changes out...
+      */
+
+      CFPreferencesSetAppValue(kLastUsedPrintersKey, newlocations,
+                               kCUPSPrintingPrefs);
+      CFPreferencesAppSynchronize(kCUPSPrintingPrefs);
+      notify_post("com.apple.printerPrefsChange");
+    }
+
+    if (newlocations)
+      CFRelease(newlocations);
+
+    if (newlocation)
+      CFRelease(newlocation);
+  }
+
+  if (locations)
+    CFRelease(locations);
+
+  CFRelease(network);
+}
+
+
+/*
+ * '_cupsAppleSetUseLastPrinter()' - Set whether to use the last used printer.
+ */
+
+void
+_cupsAppleSetUseLastPrinter(
+    int uselast)			/* O - 1 to use last printer, 0 otherwise */
+{
+  CFPreferencesSetAppValue(kUseLastPrinter,
+			   uselast ? kCFBooleanTrue : kCFBooleanFalse,
+			   kCUPSPrintingPrefs);
+  CFPreferencesAppSynchronize(kCUPSPrintingPrefs);
+  notify_post("com.apple.printerPrefsChange");
+}
+#endif /* __APPLE__ */
 
 
 /*
@@ -252,6 +497,271 @@ cupsGetDest(const char  *name,		/* I - Destination name or @code NULL@ for the d
 
 
 /*
+ * '_cupsGetDests()' - Get destinations from a server.
+ *
+ * "op" is CUPS_GET_PRINTERS to get a full list, CUPS_GET_DEFAULT to get the
+ * system-wide default printer, or IPP_GET_PRINTER_ATTRIBUTES for a known
+ * printer.
+ *
+ * "name" is the name of an existing printer and is only used when "op" is
+ * IPP_GET_PRINTER_ATTRIBUTES.
+ *
+ * "dest" is initialized to point to the array of destinations.
+ *
+ * 0 is returned if there are no printers, no default printer, or the named
+ * printer does not exist, respectively.
+ *
+ * Free the memory used by the destination array using the @link cupsFreeDests@
+ * function.
+ *
+ * Note: On Mac OS X this function also gets the default paper from the system
+ * preferences (~/L/P/org.cups.PrintingPrefs.plist) and includes it in the
+ * options array for each destination that supports it.
+ */
+
+int					/* O - Number of destinations */
+_cupsGetDests(http_t      *http,	/* I - Connection to server or CUPS_HTTP_DEFAULT */
+	      ipp_op_t    op,		/* I - IPP operation */
+	      const char  *name,	/* I - Name of destination */
+	      cups_dest_t **dests)	/* IO - Destinations */
+{
+  int		num_dests = 0;		/* Number of destinations */
+  cups_dest_t	*dest;			/* Current destination */
+  ipp_t		*request,		/* IPP Request */
+		*response;		/* IPP Response */
+  ipp_attribute_t *attr;		/* Current attribute */
+  const char	*printer_name;		/* printer-name attribute */
+  char		uri[1024];		/* printer-uri value */
+  int		num_options;		/* Number of options */
+  cups_option_t	*options;		/* Options */
+#ifdef __APPLE__
+  char		media_default[41];	/* Default paper size */
+#endif /* __APPLE__ */
+  char		optname[1024],		/* Option name */
+		value[2048],		/* Option value */
+		*ptr;			/* Pointer into name/value */
+  static const char * const pattrs[] =	/* Attributes we're interested in */
+		{
+		  "auth-info-required",
+		  "device-uri",
+		  "job-sheets-default",
+		  "marker-change-time",
+		  "marker-colors",
+		  "marker-high-levels",
+		  "marker-levels",
+		  "marker-low-levels",
+		  "marker-message",
+		  "marker-names",
+		  "marker-types",
+#ifdef __APPLE__
+		  "media-supported",
+#endif /* __APPLE__ */
+		  "printer-commands",
+		  "printer-defaults",
+		  "printer-info",
+		  "printer-is-accepting-jobs",
+		  "printer-is-shared",
+		  "printer-location",
+		  "printer-make-and-model",
+		  "printer-name",
+		  "printer-state",
+		  "printer-state-change-time",
+		  "printer-state-reasons",
+		  "printer-type",
+		  "printer-uri-supported"
+		};
+
+
+#ifdef __APPLE__
+ /*
+  * Get the default paper size...
+  */
+
+  appleGetPaperSize(media_default, sizeof(media_default));
+#endif /* __APPLE__ */
+
+ /*
+  * Build a CUPS_GET_PRINTERS or IPP_GET_PRINTER_ATTRIBUTES request, which
+  * require the following attributes:
+  *
+  *    attributes-charset
+  *    attributes-natural-language
+  *    requesting-user-name
+  *    printer-uri [for IPP_GET_PRINTER_ATTRIBUTES]
+  */
+
+  request = ippNewRequest(op);
+
+  ippAddStrings(request, IPP_TAG_OPERATION, IPP_TAG_KEYWORD,
+                "requested-attributes", sizeof(pattrs) / sizeof(pattrs[0]),
+		NULL, pattrs);
+
+  ippAddString(request, IPP_TAG_OPERATION, IPP_TAG_NAME,
+               "requesting-user-name", NULL, cupsUser());
+
+  if (name && op != CUPS_GET_DEFAULT)
+  {
+    httpAssembleURIf(HTTP_URI_CODING_ALL, uri, sizeof(uri), "ipp", NULL,
+                     "localhost", ippPort(), "/printers/%s", name);
+    ippAddString(request, IPP_TAG_OPERATION, IPP_TAG_URI, "printer-uri", NULL,
+                 uri);
+  }
+
+ /*
+  * Do the request and get back a response...
+  */
+
+  if ((response = cupsDoRequest(http, request, "/")) != NULL)
+  {
+    for (attr = response->attrs; attr != NULL; attr = attr->next)
+    {
+     /*
+      * Skip leading attributes until we hit a printer...
+      */
+
+      while (attr != NULL && attr->group_tag != IPP_TAG_PRINTER)
+        attr = attr->next;
+
+      if (attr == NULL)
+        break;
+
+     /*
+      * Pull the needed attributes from this printer...
+      */
+
+      printer_name = NULL;
+      num_options  = 0;
+      options      = NULL;
+
+      for (; attr && attr->group_tag == IPP_TAG_PRINTER; attr = attr->next)
+      {
+	if (attr->value_tag != IPP_TAG_INTEGER &&
+	    attr->value_tag != IPP_TAG_ENUM &&
+	    attr->value_tag != IPP_TAG_BOOLEAN &&
+	    attr->value_tag != IPP_TAG_TEXT &&
+	    attr->value_tag != IPP_TAG_TEXTLANG &&
+	    attr->value_tag != IPP_TAG_NAME &&
+	    attr->value_tag != IPP_TAG_NAMELANG &&
+	    attr->value_tag != IPP_TAG_KEYWORD &&
+	    attr->value_tag != IPP_TAG_RANGE &&
+	    attr->value_tag != IPP_TAG_URI)
+          continue;
+
+        if (!strcmp(attr->name, "auth-info-required") ||
+	    !strcmp(attr->name, "device-uri") ||
+	    !strcmp(attr->name, "marker-change-time") ||
+	    !strcmp(attr->name, "marker-colors") ||
+	    !strcmp(attr->name, "marker-high-levels") ||
+	    !strcmp(attr->name, "marker-levels") ||
+	    !strcmp(attr->name, "marker-low-levels") ||
+	    !strcmp(attr->name, "marker-message") ||
+	    !strcmp(attr->name, "marker-names") ||
+	    !strcmp(attr->name, "marker-types") ||
+	    !strcmp(attr->name, "printer-commands") ||
+	    !strcmp(attr->name, "printer-info") ||
+	    !strcmp(attr->name, "printer-is-shared") ||
+	    !strcmp(attr->name, "printer-make-and-model") ||
+	    !strcmp(attr->name, "printer-state") ||
+	    !strcmp(attr->name, "printer-state-change-time") ||
+	    !strcmp(attr->name, "printer-type") ||
+            !strcmp(attr->name, "printer-is-accepting-jobs") ||
+            !strcmp(attr->name, "printer-location") ||
+            !strcmp(attr->name, "printer-state-reasons") ||
+	    !strcmp(attr->name, "printer-uri-supported"))
+        {
+	 /*
+	  * Add a printer description attribute...
+	  */
+
+          num_options = cupsAddOption(attr->name,
+	                              cups_make_string(attr, value,
+				                       sizeof(value)),
+				      num_options, &options);
+	}
+#ifdef __APPLE__
+	else if (!strcmp(attr->name, "media-supported"))
+	{
+	 /*
+	  * See if we can set a default media size...
+	  */
+
+          int	i;			/* Looping var */
+
+	  for (i = 0; i < attr->num_values; i ++)
+	    if (!_cups_strcasecmp(media_default, attr->values[i].string.text))
+	    {
+	      num_options = cupsAddOption("media", media_default, num_options,
+	                                  &options);
+              break;
+	    }
+	}
+#endif /* __APPLE__ */
+        else if (!strcmp(attr->name, "printer-name") &&
+	         attr->value_tag == IPP_TAG_NAME)
+	  printer_name = attr->values[0].string.text;
+        else if (strncmp(attr->name, "notify-", 7) &&
+	         (attr->value_tag == IPP_TAG_BOOLEAN ||
+		  attr->value_tag == IPP_TAG_ENUM ||
+		  attr->value_tag == IPP_TAG_INTEGER ||
+		  attr->value_tag == IPP_TAG_KEYWORD ||
+		  attr->value_tag == IPP_TAG_NAME ||
+		  attr->value_tag == IPP_TAG_RANGE) &&
+		 (ptr = strstr(attr->name, "-default")) != NULL)
+	{
+	 /*
+	  * Add a default option...
+	  */
+
+          strlcpy(optname, attr->name, sizeof(optname));
+	  optname[ptr - attr->name] = '\0';
+
+	  if (_cups_strcasecmp(optname, "media") ||
+	      !cupsGetOption("media", num_options, options))
+	    num_options = cupsAddOption(optname,
+					cups_make_string(attr, value,
+							 sizeof(value)),
+					num_options, &options);
+	}
+      }
+
+     /*
+      * See if we have everything needed...
+      */
+
+      if (!printer_name)
+      {
+        cupsFreeOptions(num_options, options);
+
+        if (attr == NULL)
+	  break;
+	else
+          continue;
+      }
+
+      if ((dest = cups_add_dest(printer_name, NULL, &num_dests, dests)) != NULL)
+      {
+        dest->num_options = num_options;
+	dest->options     = options;
+      }
+      else
+        cupsFreeOptions(num_options, options);
+
+      if (attr == NULL)
+	break;
+    }
+
+    ippDelete(response);
+  }
+
+ /*
+  * Return the count...
+  */
+
+  return (num_dests);
+}
+
+
+/*
  * 'cupsGetDests()' - Get the list of destinations from the default server.
  *
  * Starting with CUPS 1.2, the returned list of destinations include the
@@ -319,17 +829,11 @@ cupsGetDests2(http_t      *http,	/* I - Connection to server or @code CUPS_HTTP_
   }
 
  /*
-  * Initialize destination array...
-  */
-
-  num_dests = 0;
-  *dests    = (cups_dest_t *)0;
-
- /*
   * Grab the printers and classes...
   */
 
-  num_dests = cups_get_sdests(http, CUPS_GET_PRINTERS, NULL, num_dests, dests);
+  *dests    = (cups_dest_t *)0;
+  num_dests = _cupsGetDests(http, CUPS_GET_PRINTERS, NULL, dests);
 
   if (cupsLastError() >= IPP_REDIRECTION_OTHER_SITE)
   {
@@ -400,8 +904,6 @@ cupsGetDests2(http_t      *http,	/* I - Connection to server or @code CUPS_HTTP_
   if ((home = getenv("HOME")) != NULL)
   {
     snprintf(filename, sizeof(filename), "%s/.cups/lpoptions", home);
-    if (access(filename, 0))
-      snprintf(filename, sizeof(filename), "%s/.lpoptions", home);
 
     num_dests = cups_get_dests(filename, NULL, NULL, user_default != NULL,
                                num_dests, dests);
@@ -505,7 +1007,19 @@ cupsGetNamedDest(http_t     *http,	/* I - Connection to server or @code CUPS_HTT
     set_as_default = 1;
     name           = _cupsUserDefault(defname, sizeof(defname));
 
-    if (!name && home)
+    if (name)
+    {
+      char	*ptr;			/* Temporary pointer... */
+
+      if ((ptr = strchr(defname, '/')) != NULL)
+      {
+        *ptr++   = '\0';
+	instance = ptr;
+      }
+      else
+        instance = NULL;
+    }
+    else if (home)
     {
      /*
       * No default in the environment, try the user's lpoptions files...
@@ -513,13 +1027,7 @@ cupsGetNamedDest(http_t     *http,	/* I - Connection to server or @code CUPS_HTT
 
       snprintf(filename, sizeof(filename), "%s/.cups/lpoptions", home);
 
-      if ((name = cups_get_default(filename, defname, sizeof(defname),
-				   &instance)) == NULL)
-      {
-	snprintf(filename, sizeof(filename), "%s/.lpoptions", home);
-	name = cups_get_default(filename, defname, sizeof(defname),
-				&instance);
-      }
+      name = cups_get_default(filename, defname, sizeof(defname), &instance);
     }
 
     if (!name)
@@ -547,9 +1055,9 @@ cupsGetNamedDest(http_t     *http,	/* I - Connection to server or @code CUPS_HTT
   * Get the printer's attributes...
   */
 
-  if (!cups_get_sdests(http, op, name, 0, &dest))
+  if (!_cupsGetDests(http, op, name, &dest))
   {
-    if (op == CUPS_GET_DEFAULT)
+    if (op == CUPS_GET_DEFAULT || (name && !set_as_default))
       return (NULL);
 
    /*
@@ -557,7 +1065,7 @@ cupsGetNamedDest(http_t     *http,	/* I - Connection to server or @code CUPS_HTT
     * configuration file does not exist.  Find out the real default.
     */
 
-    if (!cups_get_sdests(http, CUPS_GET_DEFAULT, name, 0, &dest))
+    if (!_cupsGetDests(http, CUPS_GET_DEFAULT, NULL, &dest))
       return (NULL);
   }
 
@@ -577,9 +1085,6 @@ cupsGetNamedDest(http_t     *http,	/* I - Connection to server or @code CUPS_HTT
   if (home)
   {
     snprintf(filename, sizeof(filename), "%s/.cups/lpoptions", home);
-
-    if (access(filename, 0))
-      snprintf(filename, sizeof(filename), "%s/.lpoptions", home);
 
     cups_get_dests(filename, name, instance, 1, 1, &dest);
   }
@@ -673,10 +1178,10 @@ cupsSetDefaultDest(
   */
 
   for (i = num_dests, dest = dests; i > 0; i --, dest ++)
-    dest->is_default = !strcasecmp(name, dest->name) &&
+    dest->is_default = !_cups_strcasecmp(name, dest->name) &&
                        ((!instance && !dest->instance) ||
 		        (instance && dest->instance &&
-			 !strcasecmp(instance, dest->instance)));
+			 !_cups_strcasecmp(instance, dest->instance)));
 }
 
 
@@ -737,7 +1242,7 @@ cupsSetDests2(http_t      *http,	/* I - Connection to server or @code CUPS_HTTP_
   * Get the server destinations...
   */
 
-  num_temps = cups_get_sdests(http, CUPS_GET_PRINTERS, NULL, 0, &temps);
+  num_temps = _cupsGetDests(http, CUPS_GET_PRINTERS, NULL, &temps);
 
   if (cupsLastError() >= IPP_REDIRECTION_OTHER_SITE)
   {
@@ -766,13 +1271,6 @@ cupsSetDests2(http_t      *http,	/* I - Connection to server or @code CUPS_HTTP_
 
     if ((home = getenv("HOME")) != NULL)
     {
-     /*
-      * Remove the old ~/.lpoptions file...
-      */
-
-      snprintf(filename, sizeof(filename), "%s/.lpoptions", home);
-      unlink(filename);
-
      /*
       * Create ~/.cups subdirectory...
       */
@@ -848,7 +1346,7 @@ cupsSetDests2(http_t      *http,	/* I - Connection to server or @code CUPS_HTTP_
         if (temp &&
 	    (val = cupsGetOption(option->name, temp->num_options,
 	                         temp->options)) != NULL &&
-            !strcasecmp(val, option->value))
+            !_cups_strcasecmp(val, option->value))
 	  continue;
 
        /*
@@ -862,7 +1360,7 @@ cupsSetDests2(http_t      *http,	/* I - Connection to server or @code CUPS_HTTP_
 	    fprintf(fp, "/%s", dest->instance);
           wrote = 1;
 	}
-        
+
         if (option->value[0])
 	{
 	  if (strchr(option->value, ' ') ||
@@ -918,7 +1416,18 @@ cupsSetDests2(http_t      *http,	/* I - Connection to server or @code CUPS_HTTP_
   */
 
   if ((dest = cupsGetDest(NULL, NULL, num_dests, dests)) != NULL)
-    appleSetDefault(dest->name);
+  {
+    CFStringRef name = CFStringCreateWithCString(kCFAllocatorDefault,
+                                                 dest->name,
+                                                 kCFStringEncodingUTF8);
+					/* Default printer name */
+
+    if (name)
+    {
+      _cupsAppleSetDefaultPrinter(name);
+      CFRelease(name);
+    }
+  }
 #endif /* __APPLE__ */
 
 #ifdef HAVE_NOTIFY_POST
@@ -945,9 +1454,7 @@ _cupsUserDefault(char   *name,		/* I - Name buffer */
 {
   const char	*env;			/* LPDEST or PRINTER env variable */
 #ifdef __APPLE__
-  CFStringRef	network;		/* Network location */
-  CFArrayRef	locations;		/* Location array */
-  CFStringRef	locprinter;		/* Current printer */
+  CFStringRef	locprinter;		/* Last printer as this location */
 #endif /* __APPLE__ */
 
 
@@ -967,59 +1474,15 @@ _cupsUserDefault(char   *name,		/* I - Name buffer */
   * system preferences...
   */
 
-  if (!appleUseLastPrinter())
+  if ((locprinter = _cupsAppleCopyDefaultPrinter()) != NULL)
   {
-    DEBUG_puts("1_cupsUserDefault: Not using last printer as default...");
-    name[0] = '\0';
-    return (NULL);
-  }
-
- /*
-  * Get the current location...
-  */
-
-  if ((network = appleCopyNetwork()) == NULL)
-  {
-    DEBUG_puts("1_cupsUserDefault: Unable to get current network...");
-    name[0] = '\0';
-    return (NULL);
-  }
-
-#  ifdef DEBUG
-  CFStringGetCString(network, name, namesize, kCFStringEncodingUTF8);
-  DEBUG_printf(("2_cupsUserDefault: network=\"%s\"", name));
-#  endif /* DEBUG */
-
- /*
-  * Lookup the network in the preferences...
-  */
-
-  if ((locations = appleCopyLocations()) == NULL)
-  {
-   /*
-    * Missing or bad location array, so no location-based default...
-    */
-
-    DEBUG_puts("1_cupsUserDefault: Missing or bad location history array...");
-
-    CFRelease(network);
-
-    name[0] = '\0';
-    return (NULL);
-  }
-  
-  DEBUG_printf(("2_cupsUserDefault: Got location, %d entries...",
-                (int)CFArrayGetCount(locations)));
-
-  if ((locprinter = appleGetPrinter(locations, network, NULL)) != NULL)
     CFStringGetCString(locprinter, name, namesize, kCFStringEncodingUTF8);
+    CFRelease(locprinter);
+  }
   else
     name[0] = '\0';
 
-  CFRelease(network);
-  CFRelease(locations);
-
-  DEBUG_printf(("1_cupsUserDefault: Returning \"%s\"...", name));
+  DEBUG_printf(("1_cupsUserDefault: Returning \"%s\".", name));
 
   return (*name ? name : NULL);
 
@@ -1049,8 +1512,8 @@ appleCopyLocations(void)
   * Look up the location array in the preferences...
   */
 
-  if ((locations = CFPreferencesCopyAppValue(kLocationHistoryArrayKey,
-                                             kPMPrintingPreferences)) == NULL)
+  if ((locations = CFPreferencesCopyAppValue(kLastUsedPrintersKey,
+                                             kCUPSPrintingPrefs)) == NULL)
     return (NULL);
 
   if (CFGetTypeID(locations) != CFArrayGetTypeID())
@@ -1074,24 +1537,52 @@ appleCopyNetwork(void)
   CFStringRef		key;		/* Current network configuration key */
   CFDictionaryRef	ip_dict;	/* Network configuration data */
   CFStringRef		network = NULL;	/* Current network ID */
-  
 
-  if ((dynamicStore = SCDynamicStoreCreate(NULL, CFSTR("Printing"), NULL,
+
+  if ((dynamicStore = SCDynamicStoreCreate(NULL, CFSTR("libcups"), NULL,
                                            NULL)) != NULL)
   {
+   /*
+    * First use the IPv6 router address, if available, since that will generally
+    * be a globally-unique link-local address.
+    */
+
     if ((key = SCDynamicStoreKeyCreateNetworkGlobalEntity(
-                   NULL, kSCDynamicStoreDomainState, kSCEntNetIPv4)) != NULL)
+                   NULL, kSCDynamicStoreDomainState, kSCEntNetIPv6)) != NULL)
     {
       if ((ip_dict = SCDynamicStoreCopyValue(dynamicStore, key)) != NULL)
       {
 	if ((network = CFDictionaryGetValue(ip_dict,
-	                                    kSCPropNetIPv4Router)) != NULL)
+	                                    kSCPropNetIPv6Router)) != NULL)
           CFRetain(network);
 
         CFRelease(ip_dict);
       }
 
       CFRelease(key);
+    }
+
+   /*
+    * If that doesn't work, try the IPv4 router address. This isn't as unique
+    * and will likely be a 10.x.y.z or 192.168.y.z address...
+    */
+
+    if (!network)
+    {
+      if ((key = SCDynamicStoreKeyCreateNetworkGlobalEntity(
+		     NULL, kSCDynamicStoreDomainState, kSCEntNetIPv4)) != NULL)
+      {
+	if ((ip_dict = SCDynamicStoreCopyValue(dynamicStore, key)) != NULL)
+	{
+	  if ((network = CFDictionaryGetValue(ip_dict,
+					      kSCPropNetIPv4Router)) != NULL)
+	    CFRetain(network);
+
+	  CFRelease(ip_dict);
+	}
+
+	CFRelease(key);
+      }
     }
 
     CFRelease(dynamicStore);
@@ -1105,22 +1596,21 @@ appleCopyNetwork(void)
  * 'appleGetPaperSize()' - Get the default paper size.
  */
 
-static char *				/* O - Default paper size */
+char *					/* O - Default paper size */
 appleGetPaperSize(char *name,		/* I - Paper size name buffer */
                   int  namesize)	/* I - Size of buffer */
 {
-  CFStringRef		defaultPaperID;	/* Default paper ID */
-  _cups_pwg_media_t	*pwgmedia;	/* PWG media size */
+  CFStringRef	defaultPaperID;		/* Default paper ID */
+  _pwg_media_t	*pwgmedia;		/* PWG media size */
 
 
-  defaultPaperID = CFPreferencesCopyAppValue(kDefaultPaperIDKey,
-                                             kPMPrintingPreferences);
+  defaultPaperID = _cupsAppleCopyDefaultPaperID();
   if (!defaultPaperID ||
       CFGetTypeID(defaultPaperID) != CFStringGetTypeID() ||
       !CFStringGetCString(defaultPaperID, name, namesize,
 			  kCFStringEncodingUTF8))
     name[0] = '\0';
-  else if ((pwgmedia = _cupsPWGMediaByLegacy(name)) != NULL)
+  else if ((pwgmedia = _pwgMediaForLegacy(name)) != NULL)
     strlcpy(name, pwgmedia->pwg, namesize);
 
   if (defaultPaperID)
@@ -1166,138 +1656,6 @@ appleGetPrinter(CFArrayRef  locations,	/* I - Location array */
     }
 
   return (NULL);
-}
-
-
-/*
- * 'appleSetDefault()' - Set the default printer for this location.
- */
-
-static void
-appleSetDefault(const char *name)	/* I - Default printer/class name */
-{
-  CFStringRef		network;	/* Current network */
-  CFArrayRef		locations;	/* Old locations array */
-  CFIndex		locindex;	/* Index in locations array */
-  CFStringRef		locprinter;	/* Current printer */
-  CFMutableArrayRef	newlocations;	/* New locations array */
-  CFMutableDictionaryRef newlocation;	/* New location */
-  CFStringRef		newprinter;	/* New printer */
-
-
- /*
-  * Get the current location...
-  */
-
-  if ((network = appleCopyNetwork()) == NULL)
-  {
-    DEBUG_puts("1appleSetDefault: Unable to get current network...");
-    return;
-  }
-
-  if ((newprinter = CFStringCreateWithCString(kCFAllocatorDefault, name,
-                                              kCFStringEncodingUTF8)) == NULL)
-  {
-    CFRelease(network);
-    return;
-  }
-
- /*
-  * Lookup the network in the preferences...
-  */
-
-  if ((locations = appleCopyLocations()) != NULL)
-    locprinter = appleGetPrinter(locations, network, &locindex);
-  else
-  {
-    locprinter = NULL;
-    locindex   = -1;
-  }
-
-  if (!locprinter ||
-      CFStringCompare(locprinter, newprinter, 0) != kCFCompareEqualTo)
-  {
-   /*
-    * Need to change the locations array...
-    */
-
-    if (locations)
-    {
-      newlocations = CFArrayCreateMutableCopy(kCFAllocatorDefault, 0,
-                                              locations);
-
-      if (locprinter)
-        CFArrayRemoveValueAtIndex(newlocations, locindex);
-    }
-    else
-      newlocations = CFArrayCreateMutable(kCFAllocatorDefault, 0, NULL);
-
-    newlocation = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
-					    &kCFTypeDictionaryKeyCallBacks,
-					    &kCFTypeDictionaryValueCallBacks);
-
-    if (newlocation && newlocations)
-    {
-     /*
-      * Put the new location at the front of the array...
-      */
-
-      CFDictionaryAddValue(newlocation, kLocationNetworkKey, network);
-      CFDictionaryAddValue(newlocation, kLocationPrinterIDKey, newprinter);
-      CFArrayInsertValueAtIndex(newlocations, 0, newlocation);
-
-     /*
-      * Limit the number of locations to 10...
-      */
-
-      while (CFArrayGetCount(newlocations) > 10)
-        CFArrayRemoveValueAtIndex(newlocations, 10);
-
-     /*
-      * Push the changes out...
-      */
-
-      CFPreferencesSetAppValue(kLocationHistoryArrayKey, newlocations,
-                               kPMPrintingPreferences);
-      CFPreferencesAppSynchronize(kPMPrintingPreferences);
-      notify_post("com.apple.printerPrefsChange");
-    }
-
-    if (newlocations)
-      CFRelease(newlocations);
-
-    if (newlocation)
-      CFRelease(newlocation);
-  }
-
-  if (locations)
-    CFRelease(locations);
-
-  CFRelease(network);
-  CFRelease(newprinter);
-}
-
-
-/*
- * 'appleUseLastPrinter()' - Get the default printer preference value.
- */
-
-static int				/* O - 1 to use last printer, 0 otherwise */
-appleUseLastPrinter(void)
-{
-  CFPropertyListRef	uselast;	/* Use last printer preference value */
-
-
-  if ((uselast = CFPreferencesCopyAppValue(kUseLastPrinterAsCurrentPrinterKey,
-                                           kPMPrintingPreferences)) != NULL)
-  {
-    CFRelease(uselast);
-
-    if (uselast == kCFBooleanFalse)
-      return (0);
-  }
-
-  return (1);
 }
 #endif /* __APPLE__ */
 
@@ -1384,10 +1742,10 @@ cups_compare_dests(cups_dest_t *a,	/* I - First destination */
   int	diff;				/* Difference */
 
 
-  if ((diff = strcasecmp(a->name, b->name)) != 0)
+  if ((diff = _cups_strcasecmp(a->name, b->name)) != 0)
     return (diff);
   else if (a->instance && b->instance)
-    return (strcasecmp(a->instance, b->instance));
+    return (_cups_strcasecmp(a->instance, b->instance));
   else
     return ((a->instance && !b->instance) - (!a->instance && b->instance));
 }
@@ -1510,7 +1868,7 @@ cups_get_default(const char *filename,	/* I - File to read */
   char		line[8192],		/* Line from file */
 		*value,			/* Value for line */
 		*nameptr;		/* Pointer into name */
-  int		linenum;		/* Current line */  
+  int		linenum;		/* Current line */
 
 
   *namebuf = '\0';
@@ -1521,7 +1879,7 @@ cups_get_default(const char *filename,	/* I - File to read */
 
     while (cupsFileGetConf(fp, line, sizeof(line), &value, &linenum))
     {
-      if (!strcasecmp(line, "default") && value)
+      if (!_cups_strcasecmp(line, "default") && value)
       {
         strlcpy(namebuf, value, namesize);
 
@@ -1598,7 +1956,7 @@ cups_get_dests(
     DEBUG_printf(("9cups_get_dests: linenum=%d line=\"%s\" lineptr=\"%s\"",
                   linenum, line, lineptr));
 
-    if ((strcasecmp(line, "dest") && strcasecmp(line, "default")) || !lineptr)
+    if ((_cups_strcasecmp(line, "dest") && _cups_strcasecmp(line, "default")) || !lineptr)
     {
       DEBUG_puts("9cups_get_dests: Not a dest or default line...");
       continue;
@@ -1645,10 +2003,10 @@ cups_get_dests(
 
     if (match_name)
     {
-      if (strcasecmp(name, match_name) ||
+      if (_cups_strcasecmp(name, match_name) ||
           (!instance && match_inst) ||
 	  (instance && !match_inst) ||
-	  (instance && strcasecmp(instance, match_inst)))
+	  (instance && _cups_strcasecmp(instance, match_inst)))
 	continue;
 
       dest = *dests;
@@ -1695,7 +2053,7 @@ cups_get_dests(
     * Set this as default if needed...
     */
 
-    if (!user_default_set && !strcasecmp(line, "default"))
+    if (!user_default_set && !_cups_strcasecmp(line, "default"))
     {
       DEBUG_puts("9cups_get_dests: Setting as default...");
 
@@ -1710,253 +2068,7 @@ cups_get_dests(
   * Close the file and return...
   */
 
-  cupsFileClose(fp);      
-
-  return (num_dests);
-}
-
-
-/*
- * 'cups_get_sdests()' - Get destinations from a server.
- */
-
-static int				/* O - Number of destinations */
-cups_get_sdests(http_t      *http,	/* I - Connection to server or CUPS_HTTP_DEFAULT */
-                ipp_op_t    op,		/* I - IPP operation */
-		const char  *name,	/* I - Name of destination */
-                int         num_dests,	/* I - Number of destinations */
-                cups_dest_t **dests)	/* IO - Destinations */
-{
-  cups_dest_t	*dest;			/* Current destination */
-  ipp_t		*request,		/* IPP Request */
-		*response;		/* IPP Response */
-  ipp_attribute_t *attr;		/* Current attribute */
-  const char	*printer_name;		/* printer-name attribute */
-  char		uri[1024];		/* printer-uri value */
-  int		num_options;		/* Number of options */
-  cups_option_t	*options;		/* Options */
-#ifdef __APPLE__
-  char		media_default[41];	/* Default paper size */
-#endif /* __APPLE__ */
-  char		optname[1024],		/* Option name */
-		value[2048],		/* Option value */
-		*ptr;			/* Pointer into name/value */
-  static const char * const pattrs[] =	/* Attributes we're interested in */
-		{
-		  "auth-info-required",
-		  "device-uri",
-		  "job-sheets-default",
-		  "marker-change-time",
-		  "marker-colors",
-		  "marker-high-levels",
-		  "marker-levels",
-		  "marker-low-levels",
-		  "marker-message",
-		  "marker-names",
-		  "marker-types",
-#ifdef __APPLE__
-		  "media-supported",
-#endif /* __APPLE__ */
-		  "printer-commands",
-		  "printer-defaults",
-		  "printer-info",
-		  "printer-is-accepting-jobs",
-		  "printer-is-shared",
-		  "printer-location",
-		  "printer-make-and-model",
-		  "printer-name",
-		  "printer-state",
-		  "printer-state-change-time",
-		  "printer-state-reasons",
-		  "printer-type",
-		  "printer-uri-supported"
-		};
-
-
-#ifdef __APPLE__
- /*
-  * Get the default paper size...
-  */
-
-  appleGetPaperSize(media_default, sizeof(media_default));
-#endif /* __APPLE__ */
-
- /*
-  * Build a CUPS_GET_PRINTERS or IPP_GET_PRINTER_ATTRIBUTES request, which
-  * require the following attributes:
-  *
-  *    attributes-charset
-  *    attributes-natural-language
-  *    requesting-user-name
-  *    printer-uri [for IPP_GET_PRINTER_ATTRIBUTES]
-  */
-
-  request = ippNewRequest(op);
-
-  ippAddStrings(request, IPP_TAG_OPERATION, IPP_TAG_KEYWORD,
-                "requested-attributes", sizeof(pattrs) / sizeof(pattrs[0]),
-		NULL, pattrs);
-
-  ippAddString(request, IPP_TAG_OPERATION, IPP_TAG_NAME,
-               "requesting-user-name", NULL, cupsUser());
-
-  if (name)
-  {
-    httpAssembleURIf(HTTP_URI_CODING_ALL, uri, sizeof(uri), "ipp", NULL,
-                     "localhost", ippPort(), "/printers/%s", name);
-    ippAddString(request, IPP_TAG_OPERATION, IPP_TAG_URI, "printer-uri", NULL,
-                 uri);
-  }
-
- /*
-  * Do the request and get back a response...
-  */
-
-  if ((response = cupsDoRequest(http, request, "/")) != NULL)
-  {
-    for (attr = response->attrs; attr != NULL; attr = attr->next)
-    {
-     /*
-      * Skip leading attributes until we hit a printer...
-      */
-
-      while (attr != NULL && attr->group_tag != IPP_TAG_PRINTER)
-        attr = attr->next;
-
-      if (attr == NULL)
-        break;
-
-     /*
-      * Pull the needed attributes from this printer...
-      */
-
-      printer_name = NULL;
-      num_options  = 0;
-      options      = NULL;
-
-      for (; attr && attr->group_tag == IPP_TAG_PRINTER; attr = attr->next)
-      {
-	if (attr->value_tag != IPP_TAG_INTEGER &&
-	    attr->value_tag != IPP_TAG_ENUM &&
-	    attr->value_tag != IPP_TAG_BOOLEAN &&
-	    attr->value_tag != IPP_TAG_TEXT &&
-	    attr->value_tag != IPP_TAG_TEXTLANG &&
-	    attr->value_tag != IPP_TAG_NAME &&
-	    attr->value_tag != IPP_TAG_NAMELANG &&
-	    attr->value_tag != IPP_TAG_KEYWORD &&
-	    attr->value_tag != IPP_TAG_RANGE &&
-	    attr->value_tag != IPP_TAG_URI)
-          continue;
-
-        if (!strcmp(attr->name, "auth-info-required") ||
-	    !strcmp(attr->name, "device-uri") ||
-	    !strcmp(attr->name, "marker-change-time") ||
-	    !strcmp(attr->name, "marker-colors") ||
-	    !strcmp(attr->name, "marker-high-levels") ||
-	    !strcmp(attr->name, "marker-levels") ||
-	    !strcmp(attr->name, "marker-low-levels") ||
-	    !strcmp(attr->name, "marker-message") ||
-	    !strcmp(attr->name, "marker-names") ||
-	    !strcmp(attr->name, "marker-types") ||
-	    !strcmp(attr->name, "printer-commands") ||
-	    !strcmp(attr->name, "printer-info") ||
-	    !strcmp(attr->name, "printer-is-shared") ||
-	    !strcmp(attr->name, "printer-make-and-model") ||
-	    !strcmp(attr->name, "printer-state") ||
-	    !strcmp(attr->name, "printer-state-change-time") ||
-	    !strcmp(attr->name, "printer-type") ||
-            !strcmp(attr->name, "printer-is-accepting-jobs") ||
-            !strcmp(attr->name, "printer-location") ||
-            !strcmp(attr->name, "printer-state-reasons") ||
-	    !strcmp(attr->name, "printer-uri-supported"))
-        {
-	 /*
-	  * Add a printer description attribute...
-	  */
-
-          num_options = cupsAddOption(attr->name,
-	                              cups_make_string(attr, value,
-				                       sizeof(value)),
-				      num_options, &options);
-	}
-#ifdef __APPLE__
-	else if (!strcmp(attr->name, "media-supported"))
-	{
-	 /*
-	  * See if we can set a default media size...
-	  */
-
-          int	i;			/* Looping var */
-
-	  for (i = 0; i < attr->num_values; i ++)
-	    if (!strcasecmp(media_default, attr->values[i].string.text))
-	    {
-	      num_options = cupsAddOption("media", media_default, num_options,
-	                                  &options);
-              break;
-	    }
-	}
-#endif /* __APPLE__ */
-        else if (!strcmp(attr->name, "printer-name") &&
-	         attr->value_tag == IPP_TAG_NAME)
-	  printer_name = attr->values[0].string.text;
-        else if (strncmp(attr->name, "notify-", 7) &&
-	         (attr->value_tag == IPP_TAG_BOOLEAN ||
-		  attr->value_tag == IPP_TAG_ENUM ||
-		  attr->value_tag == IPP_TAG_INTEGER ||
-		  attr->value_tag == IPP_TAG_KEYWORD ||
-		  attr->value_tag == IPP_TAG_NAME ||
-		  attr->value_tag == IPP_TAG_RANGE) &&
-		 (ptr = strstr(attr->name, "-default")) != NULL)
-	{
-	 /*
-	  * Add a default option...
-	  */
-
-          strlcpy(optname, attr->name, sizeof(optname));
-	  optname[ptr - attr->name] = '\0';
-
-	  if (strcasecmp(optname, "media") ||
-	      !cupsGetOption("media", num_options, options))
-	    num_options = cupsAddOption(optname,
-					cups_make_string(attr, value,
-							 sizeof(value)),
-					num_options, &options);
-	}
-      }
-
-     /*
-      * See if we have everything needed...
-      */
-
-      if (!printer_name)
-      {
-        cupsFreeOptions(num_options, options);
-
-        if (attr == NULL)
-	  break;
-	else
-          continue;
-      }
-
-      if ((dest = cups_add_dest(printer_name, NULL, &num_dests, dests)) != NULL)
-      {
-        dest->num_options = num_options;
-	dest->options     = options;
-      }
-      else
-        cupsFreeOptions(num_options, options);
-
-      if (attr == NULL)
-	break;
-    }
-
-    ippDelete(response);
-  }
-
- /*
-  * Return the count...
-  */
+  cupsFileClose(fp);
 
   return (num_dests);
 }
@@ -2053,5 +2165,5 @@ cups_make_string(
 
 
 /*
- * End of "$Id: dest.c 7946 2008-09-16 23:27:54Z mike $".
+ * End of "$Id: dest.c 9568 2011-02-25 06:13:56Z mike $".
  */

@@ -1,9 +1,9 @@
 /*
- * "$Id: raster.h 1092 2008-12-11 01:45:22Z msweet $"
+ * "$Id: raster.h 3249 2011-05-12 06:35:27Z msweet $"
  *
- *   Raster file definitions for the Common UNIX Printing System (CUPS).
+ *   Raster file definitions for CUPS.
  *
- *   Copyright 2007-2008 by Apple Inc.
+ *   Copyright 2007-2011 by Apple Inc.
  *   Copyright 1997-2006 by Easy Software Products.
  *
  *   This file is part of the CUPS Imaging library.
@@ -24,7 +24,9 @@
  * Include necessary headers...
  */
 
-#  include <cups/cups.h>
+#  include "cups.h"
+#  include "ppd.h"
+
 
 #  ifdef __cplusplus
 extern "C" {
@@ -53,6 +55,8 @@ extern "C" {
 #  define CUPS_RASTER_SYNCv2	0x52615332	/* RaS2 */
 #  define CUPS_RASTER_REVSYNCv2	0x32536152	/* 2SaR */
 
+#  define CUPS_RASTER_SYNC_PWG	CUPS_RASTER_SYNCv2
+
 
 /*
  * The following definition can be used to determine if the
@@ -61,6 +65,19 @@ extern "C" {
  */
 
 #  define CUPS_RASTER_HAVE_COLORIMETRIC 1
+
+/*
+ * The following definition can be used to determine if the
+ * device colorspaces (DEVICEn) are defined...
+ */
+
+#  define CUPS_RASTER_HAVE_DEVICE 1
+
+/*
+ * The following definition can be used to determine if PWG Raster is supported.
+ */
+
+#  define CUPS_RASTER_HAVE_PWGRASTER 1
 
 
 /*
@@ -84,26 +101,28 @@ typedef enum cups_bool_e		/**** Boolean type ****/
 
 typedef enum cups_cspace_e		/**** cupsColorSpace attribute values ****/
 {
-  CUPS_CSPACE_W = 0,			/* Luminance */
-  CUPS_CSPACE_RGB = 1,			/* Red, green, blue */
-  CUPS_CSPACE_RGBA = 2,			/* Red, green, blue, alpha */
-  CUPS_CSPACE_K = 3,			/* Black */
-  CUPS_CSPACE_CMY = 4,			/* Cyan, magenta, yellow */
-  CUPS_CSPACE_YMC = 5,			/* Yellow, magenta, cyan */
-  CUPS_CSPACE_CMYK = 6,			/* Cyan, magenta, yellow, black */
-  CUPS_CSPACE_YMCK = 7,			/* Yellow, magenta, cyan, black */
-  CUPS_CSPACE_KCMY = 8,			/* Black, cyan, magenta, yellow */
-  CUPS_CSPACE_KCMYcm = 9,		/* Black, cyan, magenta, yellow, *
-					 * light-cyan, light-magenta     */
-  CUPS_CSPACE_GMCK = 10,		/* Gold, magenta, yellow, black */
-  CUPS_CSPACE_GMCS = 11,		/* Gold, magenta, yellow, silver */
-  CUPS_CSPACE_WHITE = 12,		/* White ink (as black) */
-  CUPS_CSPACE_GOLD = 13,		/* Gold foil */
-  CUPS_CSPACE_SILVER = 14,		/* Silver foil */
+  CUPS_CSPACE_W = 0,			/* Luminance (DeviceGray, gamma 2.2 by default) */
+  CUPS_CSPACE_RGB = 1,			/* Red, green, blue (DeviceRGB, sRGB by default) */
+  CUPS_CSPACE_RGBA = 2,			/* Red, green, blue, alpha (DeviceRGB, sRGB by default) */
+  CUPS_CSPACE_K = 3,			/* Black (DeviceK) */
+  CUPS_CSPACE_CMY = 4,			/* Cyan, magenta, yellow (DeviceCMY) */
+  CUPS_CSPACE_YMC = 5,			/* Yellow, magenta, cyan @deprecated@ */
+  CUPS_CSPACE_CMYK = 6,			/* Cyan, magenta, yellow, black (DeviceCMYK) */
+  CUPS_CSPACE_YMCK = 7,			/* Yellow, magenta, cyan, black @deprecated@ */
+  CUPS_CSPACE_KCMY = 8,			/* Black, cyan, magenta, yellow @deprecated@ */
+  CUPS_CSPACE_KCMYcm = 9,		/* Black, cyan, magenta, yellow, light-cyan, light-magenta @deprecated@ */
+  CUPS_CSPACE_GMCK = 10,		/* Gold, magenta, yellow, black @deprecated@ */
+  CUPS_CSPACE_GMCS = 11,		/* Gold, magenta, yellow, silver @deprecated@ */
+  CUPS_CSPACE_WHITE = 12,		/* White ink (as black) @deprecated@ */
+  CUPS_CSPACE_GOLD = 13,		/* Gold foil @deprecated@ */
+  CUPS_CSPACE_SILVER = 14,		/* Silver foil @deprecated@ */
 
   CUPS_CSPACE_CIEXYZ = 15,		/* CIE XYZ @since CUPS 1.1.19/Mac OS X 10.3@ */
   CUPS_CSPACE_CIELab = 16,		/* CIE Lab @since CUPS 1.1.19/Mac OS X 10.3@ */
-  CUPS_CSPACE_RGBW = 17,		/* Red, green, blue, white @since CUPS 1.2/Mac OS X 10.5@ */
+  CUPS_CSPACE_RGBW = 17,		/* Red, green, blue, white (DeviceRGB, sRGB by default) @since CUPS 1.2/Mac OS X 10.5@ */
+  CUPS_CSPACE_SW = 18,			/* Luminance (gamma 2.2) @since CUPS 1.4.5@ */
+  CUPS_CSPACE_SRGB = 19,		/* Red, green, blue (sRGB) @since CUPS 1.4.5@ */
+  CUPS_CSPACE_ADOBERGB = 20,		/* Red, green, blue (Adobe RGB) @since CUPS 1.4.5@ */
 
   CUPS_CSPACE_ICC1 = 32,		/* ICC-based, 1 color @since CUPS 1.1.19/Mac OS X 10.3@ */
   CUPS_CSPACE_ICC2 = 33,		/* ICC-based, 2 colors @since CUPS 1.1.19/Mac OS X 10.3@ */
@@ -119,7 +138,23 @@ typedef enum cups_cspace_e		/**** cupsColorSpace attribute values ****/
   CUPS_CSPACE_ICCC = 43,		/* ICC-based, 12 colors @since CUPS 1.1.19/Mac OS X 10.3@ */
   CUPS_CSPACE_ICCD = 44,		/* ICC-based, 13 colors @since CUPS 1.1.19/Mac OS X 10.3@ */
   CUPS_CSPACE_ICCE = 45,		/* ICC-based, 14 colors @since CUPS 1.1.19/Mac OS X 10.3@ */
-  CUPS_CSPACE_ICCF = 46			/* ICC-based, 15 colors @since CUPS 1.1.19/Mac OS X 10.3@ */
+  CUPS_CSPACE_ICCF = 46,		/* ICC-based, 15 colors @since CUPS 1.1.19/Mac OS X 10.3@ */
+
+  CUPS_CSPACE_DEVICE1 = 48,		/* DeviceN, 1 color @since CUPS 1.4.5@ */
+  CUPS_CSPACE_DEVICE2 = 49,		/* DeviceN, 2 colors @since CUPS 1.4.5@ */
+  CUPS_CSPACE_DEVICE3 = 50,		/* DeviceN, 3 colors @since CUPS 1.4.5@ */
+  CUPS_CSPACE_DEVICE4 = 51,		/* DeviceN, 4 colors @since CUPS 1.4.5@ */
+  CUPS_CSPACE_DEVICE5 = 52,		/* DeviceN, 5 colors @since CUPS 1.4.5@ */
+  CUPS_CSPACE_DEVICE6 = 53,		/* DeviceN, 6 colors @since CUPS 1.4.5@ */
+  CUPS_CSPACE_DEVICE7 = 54,		/* DeviceN, 7 colors @since CUPS 1.4.5@ */
+  CUPS_CSPACE_DEVICE8 = 55,		/* DeviceN, 8 colors @since CUPS 1.4.5@ */
+  CUPS_CSPACE_DEVICE9 = 56,		/* DeviceN, 9 colors @since CUPS 1.4.5@ */
+  CUPS_CSPACE_DEVICEA = 57,		/* DeviceN, 10 colors @since CUPS 1.4.5@ */
+  CUPS_CSPACE_DEVICEB = 58,		/* DeviceN, 11 colors @since CUPS 1.4.5@ */
+  CUPS_CSPACE_DEVICEC = 59,		/* DeviceN, 12 colors @since CUPS 1.4.5@ */
+  CUPS_CSPACE_DEVICED = 60,		/* DeviceN, 13 colors @since CUPS 1.4.5@ */
+  CUPS_CSPACE_DEVICEE = 61,		/* DeviceN, 14 colors @since CUPS 1.4.5@ */
+  CUPS_CSPACE_DEVICEF = 62		/* DeviceN, 15 colors @since CUPS 1.4.5@ */
 } cups_cspace_t;
 
 typedef enum cups_cut_e			/**** CutMedia attribute values ****/
@@ -151,7 +186,8 @@ enum cups_mode_e			/**** cupsRasterOpen modes ****/
 {
   CUPS_RASTER_READ = 0,			/* Open stream for reading */
   CUPS_RASTER_WRITE = 1,		/* Open stream for writing */
-  CUPS_RASTER_WRITE_COMPRESSED = 2	/* Open stream for compressed writing @since CUPS 1.3/Mac OS X 10.5@ */
+  CUPS_RASTER_WRITE_COMPRESSED = 2,	/* Open stream for compressed writing @since CUPS 1.3/Mac OS X 10.5@ */
+  CUPS_RASTER_WRITE_PWG = 3		/* Open stream for compressed writing in PWG mode @since CUPS 1.5/Mac OS X 10.7@ */
 };
 
 typedef enum cups_mode_e cups_mode_t;	/**** cupsRasterOpen modes ****/
@@ -311,6 +347,19 @@ typedef int (*cups_interpret_cb_t)(cups_page_header2_t *header, int preferred_bi
 					 * dictionary and is 0 if undefined.
 					 ****/
 
+/**** New in CUPS 1.5 ****/
+typedef ssize_t (*cups_raster_iocb_t)(void *ctx, unsigned char *buffer, size_t length);
+					/**** cupsRasterOpenIO callback function
+					 *
+					 * This function is specified when
+					 * creating a raster stream with
+					 * @link cupsRasterOpenIO@ and handles
+					 * generic reading and writing of raster
+					 * data. It must return -1 on error or
+					 * the number of bytes specified by
+					 * "length" on success.
+					 ****/
+
 
 /*
  * Prototypes...
@@ -341,6 +390,10 @@ extern unsigned		cupsRasterWriteHeader2(cups_raster_t *r,
 /**** New in CUPS 1.3 ****/
 extern const char	*cupsRasterErrorString(void) _CUPS_API_1_3;
 
+/**** New in CUPS 1.5 ****/
+extern cups_raster_t	*cupsRasterOpenIO(cups_raster_iocb_t iocb, void *ctx,
+			                  cups_mode_t mode);
+
 #  ifdef __cplusplus
 }
 #  endif /* __cplusplus */
@@ -348,5 +401,5 @@ extern const char	*cupsRasterErrorString(void) _CUPS_API_1_3;
 #endif /* !_CUPS_RASTER_H_ */
 
 /*
- * End of "$Id: raster.h 1092 2008-12-11 01:45:22Z msweet $".
+ * End of "$Id: raster.h 3249 2011-05-12 06:35:27Z msweet $".
  */

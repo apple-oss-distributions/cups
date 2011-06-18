@@ -1,9 +1,9 @@
 /*
  * "$Id: image-bmp.c 7221 2008-01-16 22:20:08Z mike $"
  *
- *   BMP image routines for the Common UNIX Printing System (CUPS).
+ *   BMP image routines for CUPS.
  *
- *   Copyright 2007-2008 by Apple Inc.
+ *   Copyright 2007-2011 by Apple Inc.
  *   Copyright 1993-2007 by Easy Software Products.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -170,6 +170,8 @@ _cupsImageReadBMP(
 
   if (colors_used > 0)
     fread(colormap, colors_used, 4, fp);
+  else
+    memset(colormap, 0, sizeof(colormap));
 
  /*
   * Setup image and buffers...

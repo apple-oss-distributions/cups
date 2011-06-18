@@ -1,10 +1,9 @@
 /*
  * "$Id: ipp.h 7847 2008-08-19 04:22:14Z mike $"
  *
- *   Internet Printing Protocol definitions for the Common UNIX Printing
- *   System (CUPS).
+ *   Internet Printing Protocol definitions for CUPS.
  *
- *   Copyright 2007-2009 by Apple Inc.
+ *   Copyright 2007-2011 by Apple Inc.
  *   Copyright 1997-2006 by Easy Software Products.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -39,7 +38,7 @@ extern "C" {
  * IPP version string...
  */
 
-#  define IPP_VERSION		"\001\001"
+#  define IPP_VERSION		"\002\001"
 
 /*
  * IPP registered port number...
@@ -64,7 +63,7 @@ extern "C" {
  * Types and structures...
  */
 
-typedef enum ipp_tag_e			/**** Format tags for attributes... ****/
+typedef enum ipp_tag_e			/**** Format tags for attributes ****/
 {
   IPP_TAG_ZERO = 0x00,			/* Zero tag - used for separators */
   IPP_TAG_OPERATION,			/* Operation group */
@@ -94,7 +93,8 @@ typedef enum ipp_tag_e			/**** Format tags for attributes... ****/
   IPP_TAG_END_COLLECTION,		/* End of collection value */
   IPP_TAG_TEXT = 0x41,			/* Text value */
   IPP_TAG_NAME,				/* Name value */
-  IPP_TAG_KEYWORD = 0x44,		/* Keyword value */
+  IPP_TAG_RESERVED_STRING,		/* Reserved for future string value @private@ */
+  IPP_TAG_KEYWORD,			/* Keyword value */
   IPP_TAG_URI,				/* URI value */
   IPP_TAG_URISCHEME,			/* URI scheme value */
   IPP_TAG_CHARSET,			/* Character set value */
@@ -105,13 +105,13 @@ typedef enum ipp_tag_e			/**** Format tags for attributes... ****/
   IPP_TAG_COPY = -0x7fffffff-1		/* Bitflag for copied attribute values */
 } ipp_tag_t;
 
-typedef enum ipp_res_e			/**** Resolution units... ****/
+typedef enum ipp_res_e			/**** Resolution units ****/
 {
   IPP_RES_PER_INCH = 3,			/* Pixels per inch */
   IPP_RES_PER_CM			/* Pixels per centimeter */
 } ipp_res_t;
 
-typedef enum ipp_finish_e		/**** Finishings... ****/
+typedef enum ipp_finish_e		/**** Finishings ****/
 {
   IPP_FINISHINGS_NONE = 3,		/* No finishing */
   IPP_FINISHINGS_STAPLE,		/* Staple (any location) */
@@ -143,7 +143,7 @@ typedef enum ipp_finish_e		/**** Finishings... ****/
   IPP_FINISHINGS_BIND_BOTTOM		/* Bind on bottom */
 } ipp_finish_t;
 
-typedef enum ipp_orient_e		/**** Orientation... ****/
+typedef enum ipp_orient_e		/**** Orientation values ****/
 {
   IPP_PORTRAIT = 3,			/* No rotation */
   IPP_LANDSCAPE,			/* 90 degrees counter-clockwise */
@@ -151,14 +151,14 @@ typedef enum ipp_orient_e		/**** Orientation... ****/
   IPP_REVERSE_PORTRAIT			/* 180 degrees */
 } ipp_orient_t;
 
-typedef enum ipp_quality_e		/**** Qualities... ****/
+typedef enum ipp_quality_e		/**** Qualities ****/
 {
   IPP_QUALITY_DRAFT = 3,		/* Draft quality */
   IPP_QUALITY_NORMAL,			/* Normal quality */
   IPP_QUALITY_HIGH			/* High quality */
 } ipp_quality_t;
 
-typedef enum ipp_jstate_e		/**** Job States.... */
+typedef enum ipp_jstate_e		/**** Job states ****/
 {
   IPP_JOB_PENDING = 3,			/* Job is waiting to be printed */
   IPP_JOB_HELD,				/* Job is held for printing */
@@ -170,14 +170,14 @@ typedef enum ipp_jstate_e		/**** Job States.... */
 } ipp_jstate_t;
 #define IPP_JOB_CANCELLED IPP_JOB_CANCELED
 
-typedef enum ipp_pstate_e		/**** Printer States.... */
+typedef enum ipp_pstate_e		/**** Printer states ****/
 {
   IPP_PRINTER_IDLE = 3,			/* Printer is idle */
   IPP_PRINTER_PROCESSING,		/* Printer is working */
   IPP_PRINTER_STOPPED			/* Printer is stopped */
 } ipp_pstate_t;
 
-typedef enum ipp_state_e		/**** IPP states... ****/
+typedef enum ipp_state_e		/**** IPP states ****/
 {
   IPP_ERROR = -1,			/* An error occurred */
   IPP_IDLE,				/* Nothing is happening/request completed */
@@ -186,7 +186,7 @@ typedef enum ipp_state_e		/**** IPP states... ****/
   IPP_DATA				/* IPP request data needs to be sent/received */
 } ipp_state_t;
 
-typedef enum ipp_op_e			/**** IPP operations... ****/
+typedef enum ipp_op_e			/**** IPP operations ****/
 {
   IPP_PRINT_JOB = 0x0002,		/* Print a single file */
   IPP_PRINT_URI,			/* Print a single URL @private@ */
@@ -232,6 +232,15 @@ typedef enum ipp_op_e			/**** IPP operations... ****/
   IPP_RESUME_JOB,			/* Resume the current job @private@ */
   IPP_PROMOTE_JOB,			/* Promote a job to print sooner @private@ */
   IPP_SCHEDULE_JOB_AFTER,		/* Schedule a job to print after another @private@ */
+  IPP_CANCEL_DOCUMENT = 0x0033,		/* Cancel-Document @private@ */
+  IPP_GET_DOCUMENT_ATTRIBUTES,		/* Get-Document-Attributes @private@ */
+  IPP_GET_DOCUMENTS,			/* Get-Documents @private@ */
+  IPP_DELETE_DOCUMENT,			/* Delete-Document @private@ */
+  IPP_SET_DOCUMENT_ATTRIBUTES,		/* Set-Document-Attributes @private@ */
+  IPP_CANCEL_JOBS,			/* Cancel-Jobs */
+  IPP_CANCEL_MY_JOBS,			/* Cancel-My-Jobs */
+  IPP_RESUBMIT_JOB,			/* Resubmit-Job */
+  IPP_CLOSE_JOB,			/* Close-Job */
   IPP_PRIVATE = 0x4000,			/* Reserved @private@ */
   CUPS_GET_DEFAULT,			/* Get the default printer */
   CUPS_GET_PRINTERS,			/* Get a list of printers and/or classes */
@@ -255,7 +264,7 @@ typedef enum ipp_op_e			/**** IPP operations... ****/
 #define CUPS_ADD_PRINTER	CUPS_ADD_MODIFY_PRINTER
 #define CUPS_ADD_CLASS		CUPS_ADD_MODIFY_CLASS
 
-typedef enum ipp_status_e		/**** IPP status codes... ****/
+typedef enum ipp_status_e		/**** IPP status codes ****/
 {
   IPP_OK = 0x0000,			/* successful-ok */
   IPP_OK_SUBST,				/* successful-ok-ignored-or-substituted-attributes */
@@ -302,7 +311,11 @@ typedef enum ipp_status_e		/**** IPP status codes... ****/
   IPP_PRINTER_BUSY,			/* server-error-busy */
   IPP_ERROR_JOB_CANCELED,		/* server-error-job-canceled */
   IPP_MULTIPLE_JOBS_NOT_SUPPORTED,	/* server-error-multiple-document-jobs-not-supported */
-  IPP_PRINTER_IS_DEACTIVATED		/* server-error-printer-is-deactivated */
+  IPP_PRINTER_IS_DEACTIVATED,		/* server-error-printer-is-deactivated */
+
+  IPP_AUTHENTICATION_CANCELED = 0x1000,	/* Authentication canceled by user @since CUPS 1.5/Mac OS X 10.7@ */
+  IPP_PKI_ERROR,			/* Error negotiating a secure connection @since CUPS 1.5/Mac OS X 10.7@ */
+  IPP_UPGRADE_REQUIRED			/* TLS upgrade required */
 } ipp_status_t;
 #define IPP_ERROR_JOB_CANCELLED IPP_ERROR_JOB_CANCELED
 
@@ -405,6 +418,9 @@ struct ipp_s				/**** IPP Request/Response/Notification ****/
 
 /**** New in CUPS 1.2 ****/
   ipp_attribute_t *prev;		/* Previous attribute (for read) @since CUPS 1.2/Mac OS X 10.5@ */
+
+/**** New in CUPS 1.4.4 ****/
+  int		use;			/* Use count @since CUPS 1.4.4/Mac OS X 10.6.?@ */
 };
 
 

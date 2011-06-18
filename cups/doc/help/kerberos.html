@@ -53,7 +53,7 @@ systems and network.</P>
 Kerberos on your system and setup a system as a KDC. Because this
 configuration is highly system and site-specific, please consult
 the following on-line resources provided by the creators of Kerberos
-at the Massachussetts Institute of Technology (MIT):</P>
+at the Massachusetts Institute of Technology (MIT):</P>
 
 <UL>
 
@@ -103,7 +103,7 @@ for more information.</P>
 <H2 CLASS="title"><A NAME="IMPLEMENT">Implementation Information</A></H2>
 
 <P>CUPS implements Kerberos over HTTP using GSSAPI and the service name
-"ipp". Because of limitations in the HTTP GSSAPI protocol extension, only
+"host". Because of limitations in the HTTP GSSAPI protocol extension, only
 a single domain/KDC is supported for authentication.</P>
 
 <P>When doing printing tasks that require authentication, CUPS requests a
@@ -113,7 +113,7 @@ converted to just "user" for purposes of user and group checks.</P>
 
 <P>In order to support printing to a shared printer, CUPS has to ask the KDC
 for a copy of your credentials (this is called delegation) that can be sent to
-the remote server for authenticatation. Delegation only works when the system
+the remote server for authentication. Delegation only works when the system
 has a stable hostname which maps to the current address of the system, which
 is why you need a static IP address or DHCP that updates the DNS entry for your
 system.</P>

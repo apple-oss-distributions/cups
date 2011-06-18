@@ -1,10 +1,9 @@
 /*
  * "$Id: network.c 7861 2008-08-26 03:15:14Z mike $"
  *
- *   Network interface functions for the Common UNIX Printing System
- *   (CUPS) scheduler.
+ *   Network interface functions for the CUPS scheduler.
  *
- *   Copyright 2007-2009 by Apple Inc.
+ *   Copyright 2007-2010 by Apple Inc.
  *   Copyright 1997-2006 by Easy Software Products, all rights reserved.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -155,7 +154,7 @@ cupsdNetIFUpdate(void)
     * Try looking up the hostname for the address as needed...
     */
 
-    if (HostNameLookups || RemotePort)
+    if (HostNameLookups)
       httpAddrLookup((http_addr_t *)(addr->ifa_addr), hostname,
                      sizeof(hostname));
     else
@@ -163,7 +162,7 @@ cupsdNetIFUpdate(void)
      /*
       * Map the default server address and localhost to the server name
       * and localhost, respectively; for all other addresses, use the
-      * dotted notation...
+      * numeric address...
       */
 
       if (httpAddrLocalhost((http_addr_t *)(addr->ifa_addr)))
@@ -265,12 +264,7 @@ cupsdNetIFUpdate(void)
 
       if (match)
       {
-        if (lis->address.addr.sa_family == AF_INET)
-          temp->port = ntohs(lis->address.ipv4.sin_port);
-#ifdef AF_INET6
-        else if (lis->address.addr.sa_family == AF_INET6)
-          temp->port = ntohs(lis->address.ipv6.sin6_port);
-#endif /* AF_INET6 */
+        temp->port = _httpAddrPort(&(lis->address));
 	break;
       }
     }

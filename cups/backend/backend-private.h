@@ -1,9 +1,9 @@
 /*
  * "$Id: backend-private.h 7810 2008-07-29 01:11:15Z mike $"
  *
- *   Backend support definitions for the Common UNIX Printing System (CUPS).
+ *   Backend support definitions for CUPS.
  *
- *   Copyright 2007-2009 by Apple Inc.
+ *   Copyright 2007-2011 by Apple Inc.
  *   Copyright 1997-2007 by Easy Software Products, all rights reserved.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -23,16 +23,31 @@
  * Include necessary headers.
  */
 
+#  include <cups/cups-private.h>
+#  include <cups/snmp-private.h>
 #  include <cups/backend.h>
 #  include <cups/sidechannel.h>
-#  include <cups/ppd-private.h>
-#  include <cups/debug.h>
-#  include <cups/i18n.h>
-#  include <cups/snmp-private.h>
-#  include <stdlib.h>
-#  include <errno.h>
-#  include <cups/string.h>
 #  include <signal.h>
+
+#  ifdef __linux
+#    include <sys/ioctl.h>
+#    include <linux/lp.h>
+#    define IOCNR_GET_DEVICE_ID		1
+#    define LPIOC_GET_DEVICE_ID(len)	_IOC(_IOC_READ, 'P', IOCNR_GET_DEVICE_ID, len)
+#    include <linux/parport.h>
+#    include <linux/ppdev.h>
+#    include <unistd.h>
+#    include <fcntl.h>
+#  endif /* __linux */
+
+#  ifdef __sun
+#    ifdef __sparc
+#      include <sys/ecppio.h>
+#    else
+#      include <sys/ioccom.h>
+#      include <sys/ecppsys.h>
+#    endif /* __sparc */
+#  endif /* __sun */
 
 
 /*
@@ -262,6 +277,14 @@ extern "C" {
 
 
 /*
+ * Types...
+ */
+
+typedef int (*_cups_sccb_t)(int print_fd, int device_fd, int snmp_fd,
+			    http_addr_t *addr, int use_bc);
+
+
+/*
  * Prototypes...
  */
 
@@ -276,19 +299,18 @@ extern int		backendGetDeviceID(int fd, char *device_id,
 extern int		backendGetMakeModel(const char *device_id,
 			                    char *make_model,
 				            int make_model_size);
-extern void		backendNetworkSideCB(int print_fd, int device_fd,
+extern int		backendNetworkSideCB(int print_fd, int device_fd,
 			                     int snmp_fd, http_addr_t *addr,
 					     int use_bc);
 extern ssize_t		backendRunLoop(int print_fd, int device_fd, int snmp_fd,
 			               http_addr_t *addr, int use_bc,
-				       void (*side_cb)(int print_fd,
-				                       int device_fd,
-						       int snmp_fd,
-						       http_addr_t *addr,
-						       int use_bc));
+			               int update_state, _cups_sccb_t side_cb);
 extern int		backendSNMPSupplies(int snmp_fd, http_addr_t *addr,
 			                    int *page_count,
 					    int *printer_state);
+extern int		backendWaitLoop(int snmp_fd, http_addr_t *addr,
+			                int use_bc, _cups_sccb_t side_cb);
+
 
 #  ifdef __cplusplus
 }

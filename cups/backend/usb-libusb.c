@@ -1,9 +1,9 @@
 /*
- * "$Id: usb-libusb.c 1125 2009-01-14 20:00:02Z msweet $"
+ * "$Id: usb-libusb.c 3321 2011-06-15 00:40:30Z msweet $"
  *
- *   Libusb interface code for the Common UNIX Printing System (CUPS).
+ *   Libusb interface code for CUPS.
  *
- *   Copyright 2007-2009 by Apple Inc.
+ *   Copyright 2007-2011 by Apple Inc.
  *
  *   These coded instructions, statements, and computer programs are the
  *   property of Apple Inc. and are protected by Federal copyright
@@ -31,6 +31,7 @@
 
 #include <usb.h>
 #include <poll.h>
+#include <cups/cups-private.h>
 
 
 /*
@@ -100,7 +101,7 @@ print_device(const char *uri,		/* I - Device URI */
   usb_printer_t	*printer;		/* Printer */
   ssize_t	bytes,			/* Bytes read/written */
 		tbytes;			/* Total bytes written */
-  char		buffer[8192];		/* Print data buffer */
+  char		buffer[512];		/* Print data buffer */
   struct sigaction action;		/* Actions for POSIX signals */
   struct pollfd	pfds[2];		/* Poll descriptors */
 
@@ -113,8 +114,8 @@ print_device(const char *uri,		/* I - Device URI */
 
   while ((printer = find_device(print_cb, uri)) == NULL)
   {
-    _cupsLangPuts(stderr,
-		  _("INFO: Waiting for printer to become available...\n"));
+    _cupsLangPrintFilter(stderr, "INFO",
+			 _("Waiting for printer to become available."));
     sleep(5);
   }
 
@@ -158,16 +159,24 @@ print_device(const char *uri,		/* I - Device URI */
 
     while (poll(pfds, 2, -1) > 0)
     {
-      if (pfds[0].revents & POLLIN)
+     /*
+      * CUPS STR #3318: USB process hangs on end-of-file, making further
+      *                 printing impossible
+      *
+      * From a strict interpretation of POSIX poll(), POLLHUP should never be
+      * set without POLLIN, since POLLIN is the event you request.  That said,
+      * it appears that some versions of Linux break this.
+      */
+
+      if (pfds[0].revents & (POLLIN | POLLHUP))
       {
 	if ((bytes = read(print_fd, buffer, sizeof(buffer))) > 0)
 	{
 	  if (usb_bulk_write(printer->handle, printer->write_endp, buffer,
-	                        bytes, 45000) < 0)
+	                        bytes, 3600000) < 0)
 	  {
-	    _cupsLangPrintf(stderr,
-			    _("ERROR: Unable to write %d bytes to printer!\n"),
-			    (int)bytes);
+	    _cupsLangPrintFilter(stderr, "ERROR",
+			         _("Unable to send data to printer."));
 	    tbytes = -1;
 	    break;
 	  }
@@ -178,8 +187,13 @@ print_device(const char *uri,		/* I - Device URI */
 	  break;
       }
 
-      if (pfds[1].revents & POLLIN)
-        tbytes += side_cb(printer, print_fd);
+      if (pfds[1].revents & (POLLIN | POLLHUP))
+      {
+        if ((bytes = side_cb(printer, print_fd)) < 0)
+	  pfds[1].events = 0;		/* Filter has gone away... */
+	else
+          tbytes += bytes;
+      }
     }
   }
 
@@ -397,7 +411,7 @@ get_device_id(usb_printer_t *printer,	/* I - Printer */
 
   if (usb_control_msg(printer->handle,
                       USB_TYPE_CLASS | USB_ENDPOINT_IN | USB_RECIP_INTERFACE,
-		      0, printer->conf, printer->iface,
+		      0, printer->conf, (printer->iface << 8) | printer->altset,
 		      buffer, bufsize, 5000) < 0)
   {
     *buffer = '\0';
@@ -418,12 +432,14 @@ get_device_id(usb_printer_t *printer,	/* I - Printer */
   * and then limit the length to the size of our buffer...
   */
 
-  if (length > (bufsize - 2))
+  if (length > bufsize)
     length = (((unsigned)buffer[1] & 255) << 8) +
 	     ((unsigned)buffer[0] & 255);
 
-  if (length > (bufsize - 2))
-    length = bufsize - 2;
+  if (length > bufsize)
+    length = bufsize;
+
+  length -= 2;
 
  /*
   * Copy the device ID text to the beginning of the buffer and
@@ -489,6 +505,7 @@ make_device_uri(
 		*mdl,			/* Model */
 		*des,			/* Description */
 		*sern;			/* Serial number */
+  size_t	mfglen;			/* Length of manufacturer string */
   char		tempmfg[256],		/* Temporary manufacturer string */
 		tempsern[256],		/* Temporary serial number string */
 		*tempptr;		/* Pointer into temp string */
@@ -498,11 +515,12 @@ make_device_uri(
   * Get the make, model, and serial numbers...
   */
 
-  num_values = _ppdGet1284Values(device_id, &values);
+  num_values = _cupsGet1284Values(device_id, &values);
 
   if ((sern = cupsGetOption("SERIALNUMBER", num_values, values)) == NULL)
     if ((sern = cupsGetOption("SERN", num_values, values)) == NULL)
-      if ((sern = cupsGetOption("SN", num_values, values)) == NULL)
+      if ((sern = cupsGetOption("SN", num_values, values)) == NULL &&
+          printer->device->descriptor.iSerialNumber)
       {
        /*
         * Try getting the serial number from the device itself...
@@ -541,9 +559,9 @@ make_device_uri(
 
   if (mfg)
   {
-    if (!strcasecmp(mfg, "Hewlett-Packard"))
+    if (!_cups_strcasecmp(mfg, "Hewlett-Packard"))
       mfg = "HP";
-    else if (!strcasecmp(mfg, "Lexmark International"))
+    else if (!_cups_strcasecmp(mfg, "Lexmark International"))
       mfg = "Lexmark";
   }
   else
@@ -565,6 +583,16 @@ make_device_uri(
       *tempptr = '\0';
 
     mfg = tempmfg;
+  }
+
+  mfglen = strlen(mfg);
+
+  if (!strncasecmp(mdl, mfg, mfglen) && _cups_isspace(mdl[mfglen]))
+  {
+    mdl += mfglen + 1;
+
+    while (_cups_isspace(*mdl))
+      mdl ++;
   }
 
  /*
@@ -658,6 +686,7 @@ open_device(usb_printer_t *printer,	/* I - Printer */
     goto error;
   }
 
+#if 0 /* STR #3801: Claiming interface 0 causes problems with some printers */
   if (number != 0)
     while (usb_claim_interface(printer->handle, 0) < 0)
     {
@@ -668,6 +697,7 @@ open_device(usb_printer_t *printer,	/* I - Printer */
 
       goto error;
     }
+#endif /* 0 */
 
  /*
   * Set alternate setting...
@@ -717,7 +747,87 @@ print_cb(usb_printer_t *printer,	/* I - Printer */
          const char    *device_id,	/* I - IEEE-1284 device ID */
          const void    *data)		/* I - User data (make, model, S/N) */
 {
-  return (!strcmp((char *)data, device_uri));
+  char	requested_uri[1024],		/* Requested URI */
+	*requested_ptr,			/* Pointer into requested URI */
+	detected_uri[1024],		/* Detected URI */
+	*detected_ptr;			/* Pointer into detected URI */
+
+
+ /*
+  * If we have an exact match, stop now...
+  */
+
+  if (!strcmp((char *)data, device_uri))
+    return (1);
+
+ /*
+  * Work on copies of the URIs...
+  */
+
+  strlcpy(requested_uri, (char *)data, sizeof(requested_uri));
+  strlcpy(detected_uri, device_uri, sizeof(detected_uri));
+
+ /*
+  * libusb-discovered URIs can have an "interface" specification and this
+  * never happens for usblp-discovered URIs, so remove the "interface"
+  * specification from the URI which we are checking currently. This way a
+  * queue for a usblp-discovered printer can now be accessed via libusb.
+  *
+  * Similarly, strip "?serial=NNN...NNN" as needed.
+  */
+
+  if ((requested_ptr = strstr(requested_uri, "?interface=")) == NULL)
+    requested_ptr = strstr(requested_uri, "&interface=");
+  if ((detected_ptr = strstr(detected_uri, "?interface=")) == NULL)
+    detected_ptr = strstr(detected_uri, "&interface=");
+
+  if (!requested_ptr && detected_ptr)
+  {
+   /*
+    * Strip "[?&]interface=nnn" from the detected printer.
+    */
+
+    *detected_ptr = '\0';
+  }
+  else if (requested_ptr && !detected_ptr)
+  {
+   /*
+    * Strip "[?&]interface=nnn" from the requested printer.
+    */
+
+    *requested_ptr = '\0';
+  }
+
+  if ((requested_ptr = strstr(requested_uri, "?serial=?")) != NULL)
+  {
+   /*
+    * Strip "?serial=?" from the requested printer.  This is a special
+    * case, as "?serial=?" means no serial number and not the serial
+    * number '?'.  This is not covered by the checks below...
+    */
+
+    *requested_ptr = '\0';
+  }
+
+  if ((requested_ptr = strstr(requested_uri, "?serial=")) == NULL &&
+      (detected_ptr = strstr(detected_uri, "?serial=")) != NULL)
+  {
+   /*
+    * Strip "?serial=nnn" from the detected printer.
+    */
+
+    *detected_ptr = '\0';
+  }
+  else if (requested_ptr && !detected_ptr)
+  {
+   /*
+    * Strip "?serial=nnn" from the requested printer.
+    */
+
+    *requested_ptr = '\0';
+  }
+
+  return (!strcmp(requested_uri, detected_uri));
 }
 
 
@@ -731,7 +841,7 @@ side_cb(usb_printer_t *printer,		/* I - Printer */
 {
   ssize_t		bytes,		/* Bytes read/written */
 			tbytes;		/* Total bytes written */
-  char			buffer[8192];	/* Print data buffer */
+  char			buffer[512];	/* Print data buffer */
   struct pollfd		pfd;		/* Poll descriptor */
   cups_sc_command_t	command;	/* Request command */
   cups_sc_status_t	status;		/* Request/response status */
@@ -743,10 +853,7 @@ side_cb(usb_printer_t *printer,		/* I - Printer */
   datalen = sizeof(data);
 
   if (cupsSideChannelRead(&command, &status, data, &datalen, 1.0))
-  {
-    _cupsLangPuts(stderr, _("WARNING: Failed to read side-channel request!\n"));
-    return (0);
-  }
+    return (-1);
 
   switch (command)
   {
@@ -761,9 +868,8 @@ side_cb(usb_printer_t *printer,		/* I - Printer */
 	    while (usb_bulk_write(printer->handle, printer->write_endp, buffer,
 				  bytes, 5000) < 0)
 	    {
-	      _cupsLangPrintf(stderr,
-			      _("ERROR: Unable to write %d bytes to printer!\n"),
-			      (int)bytes);
+	      _cupsLangPrintFilter(stderr, "ERROR",
+			           _("Unable to send data to printer."));
 	      tbytes = -1;
 	      break;
 	    }
@@ -814,6 +920,6 @@ side_cb(usb_printer_t *printer,		/* I - Printer */
 
 
 /*
- * End of "$Id: usb-libusb.c 1125 2009-01-14 20:00:02Z msweet $".
+ * End of "$Id: usb-libusb.c 3321 2011-06-15 00:40:30Z msweet $".
  */
 

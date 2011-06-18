@@ -1,9 +1,9 @@
 /*
  * "$Id: tempfile.c 7337 2008-02-22 04:44:04Z mike $"
  *
- *   Temp file utilities for the Common UNIX Printing System (CUPS).
+ *   Temp file utilities for CUPS.
  *
- *   Copyright 2007-2008 by Apple Inc.
+ *   Copyright 2007-2010 by Apple Inc.
  *   Copyright 1997-2006 by Easy Software Products.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -25,10 +25,8 @@
  * Include necessary headers...
  */
 
-#include "globals.h"
-#include "debug.h"
+#include "cups-private.h"
 #include <stdlib.h>
-#include <errno.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #if defined(WIN32) || defined(__EMX__)
@@ -118,8 +116,8 @@ cupsTempFd(char *filename,		/* I - Pointer to buffer */
     * Format a string using the hex time values...
     */
 
-    snprintf(filename, len - 1, "%s/%08lx%05lx", tmpdir,
-             (unsigned long)curtime.tv_sec, (unsigned long)curtime.tv_usec);
+    snprintf(filename, len - 1, "%s/%05x%08x", tmpdir, (unsigned)getpid(),
+             (unsigned)(curtime.tv_sec + curtime.tv_usec + tries));
 #endif /* WIN32 */
 
    /*

@@ -1,9 +1,9 @@
 /*
- * "$Id: mark.c 8210 2009-01-09 02:30:26Z mike $"
+ * "$Id: mark.c 9042 2010-03-24 00:45:34Z mike $"
  *
- *   Option marking routines for the Common UNIX Printing System (CUPS).
+ *   Option marking routines for CUPS.
  *
- *   Copyright 2007-2009 by Apple Inc.
+ *   Copyright 2007-2011 by Apple Inc.
  *   Copyright 1997-2007 by Easy Software Products, all rights reserved.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -29,12 +29,10 @@
  *   ppdFirstOption()      - Return the first option in the PPD file.
  *   ppdNextOption()       - Return the next option in the PPD file.
  *   _ppdParseOptions()    - Parse options from a PPD file.
- *   debug_marked()        - Output the marked array to stdout...
+ *   ppd_debug_marked()    - Output the marked array to stdout...
  *   ppd_defaults()        - Set the defaults for this group and all sub-groups.
  *   ppd_mark_choices()    - Mark one or more option choices from a string.
  *   ppd_mark_option()     - Quickly mark an option without checking for
- *                           conflicts.
- *   ppd_mark_size()       - Quickly mark a page size without checking for
  *                           conflicts.
  */
 
@@ -42,10 +40,7 @@
  * Include necessary headers...
  */
 
-#include "cups.h"
-#include "string.h"
-#include "debug.h"
-#include "pwgmedia.h"
+#include "cups-private.h"
 
 
 /*
@@ -53,23 +48,23 @@
  */
 
 #ifdef DEBUG
-static void	debug_marked(ppd_file_t *ppd, const char *title);
+static void	ppd_debug_marked(ppd_file_t *ppd, const char *title);
 #else
-#  define	debug_marked(ppd,title)
+#  define	ppd_debug_marked(ppd,title)
 #endif /* DEBUG */
 static void	ppd_defaults(ppd_file_t *ppd, ppd_group_t *g);
 static void	ppd_mark_choices(ppd_file_t *ppd, const char *s);
 static void	ppd_mark_option(ppd_file_t *ppd, const char *option,
 		                const char *choice);
-static void	ppd_mark_size(ppd_file_t *ppd, const char *size);
 
 
 /*
  * 'cupsMarkOptions()' - Mark command-line options in a PPD file.
  *
  * This function maps the IPP "finishings", "media", "mirror",
- * "multiple-document-handling", "output-bin", "printer-resolution", and
- * "sides" attributes to their corresponding PPD options and choices.
+ * "multiple-document-handling", "output-bin", "print-color-mode",
+ * "print-quality", "printer-resolution", and "sides" attributes to their
+ * corresponding PPD options and choices.
  */
 
 int					/* O - 1 if conflicts exist, 0 otherwise */
@@ -78,41 +73,20 @@ cupsMarkOptions(
     int           num_options,		/* I - Number of options */
     cups_option_t *options)		/* I - Options */
 {
-  int		i, j, k;		/* Looping vars */
+  int		i, j;			/* Looping vars */
   char		*ptr,			/* Pointer into string */
 		s[255];			/* Temporary string */
   const char	*val,			/* Pointer into value */
 		*media,			/* media option */
-		*media_col,		/* media-col option */
-		*page_size;		/* PageSize option */
+		*output_bin,		/* output-bin option */
+		*page_size,		/* PageSize option */
+		*ppd_keyword,		/* PPD keyword */
+		*print_color_mode,	/* print-color-mode option */
+		*print_quality,		/* print-quality option */
+		*sides;			/* sides option */
   cups_option_t	*optptr;		/* Current option */
-  ppd_option_t	*option;		/* PPD option */
   ppd_attr_t	*attr;			/* PPD attribute */
-  static const char * const duplex_options[] =
-		{			/* Duplex option names */
-		  "Duplex",		/* Adobe */
-		  "EFDuplex",		/* EFI */
-		  "EFDuplexing",	/* EFI */
-		  "KD03Duplex",		/* Kodak */
-		  "JCLDuplex"		/* Samsung */
-		};
-  static const char * const duplex_one[] =
-		{			/* one-sided names */
-		  "None",
-		  "False"
-		};
-  static const char * const duplex_two_long[] =
-		{			/* two-sided-long-edge names */
-		  "DuplexNoTumble",	/* Adobe */
-		  "LongEdge",		/* EFI */
-		  "Top"			/* EFI */
-		};
-  static const char * const duplex_two_short[] =
-		{			/* two-sided-long-edge names */
-		  "DuplexTumble",	/* Adobe */
-		  "ShortEdge",		/* EFI */
-		  "Bottom"		/* EFI */
-		};
+  _ppd_cache_t	*cache;			/* PPD cache and mapping data */
 
 
  /*
@@ -122,79 +96,45 @@ cupsMarkOptions(
   if (!ppd || num_options <= 0 || !options)
     return (0);
 
-  debug_marked(ppd, "Before...");
+  ppd_debug_marked(ppd, "Before...");
 
  /*
-  * Do special handling for media, media-col, and PageSize...
+  * Do special handling for finishings, media, output-bin, output-mode,
+  * print-color-mode, print-quality, and PageSize...
   */
 
-  media     = cupsGetOption("media", num_options, options);
-  media_col = cupsGetOption("media-col", num_options, options);
-  page_size = cupsGetOption("PageSize", num_options, options);
+  media         = cupsGetOption("media", num_options, options);
+  output_bin    = cupsGetOption("output-bin", num_options, options);
+  page_size     = cupsGetOption("PageSize", num_options, options);
+  print_quality = cupsGetOption("print-quality", num_options, options);
+  sides         = cupsGetOption("sides", num_options, options);
 
-  if (media_col && (!page_size || !page_size[0]))
+  if ((print_color_mode = cupsGetOption("print-color-mode", num_options,
+                                        options)) == NULL)
+    print_color_mode = cupsGetOption("output-mode", num_options, options);
+
+  if ((media || output_bin || print_color_mode || print_quality || sides) &&
+      !ppd->cache)
   {
    /*
-    * Pull out the corresponding media size from the media-col value...
+    * Load PPD cache and mapping data as needed...
     */
 
-    int			num_media_cols,	/* Number of media-col values */
-    			num_media_sizes;/* Number of media-size values */
-    cups_option_t	*media_cols,	/* media-col values */
-			*media_sizes;	/* media-size values */
-
-
-    num_media_cols = cupsParseOptions(media_col, 0, &media_cols);
-
-    if ((val = cupsGetOption("media-key", num_media_cols, media_cols)) != NULL)
-      media = val;
-    else if ((val = cupsGetOption("media-size", num_media_cols,
-                                  media_cols)) != NULL)
-    {
-     /*
-      * Lookup by dimensions...
-      */
-
-      double		width,		/* Width in points */
-			length;		/* Length in points */
-      struct lconv	*loc;		/* Locale data */
-      _cups_pwg_media_t	*pwgmedia;	/* PWG media name */
-
-
-      num_media_sizes = cupsParseOptions(val, 0, &media_sizes);
-      loc             = localeconv();
-
-      if ((val = cupsGetOption("x-dimension", num_media_sizes,
-                               media_sizes)) != NULL)
-        width = _cupsStrScand(val, NULL, loc) * 2540.0 / 72.0;
-      else
-        width = 0.0;
-
-      if ((val = cupsGetOption("y-dimension", num_media_sizes,
-                               media_sizes)) != NULL)
-        length = _cupsStrScand(val, NULL, loc) * 2540.0 / 72.0;
-      else
-        length = 0.0;
-
-      if ((pwgmedia = _cupsPWGMediaBySize(width, length)) != NULL)
-        media = pwgmedia->pwg;
-
-      cupsFreeOptions(num_media_sizes, media_sizes);
-    }
-
-    cupsFreeOptions(num_media_cols, media_cols);
+    ppd->cache = _ppdCacheCreateWithPPD(ppd);
   }
+
+  cache = ppd->cache;
 
   if (media)
   {
    /*
-    * Loop through the option string, separating it at commas and
-    * marking each individual option as long as the corresponding
-    * PPD option (PageSize, InputSlot, etc.) is not also set.
+    * Loop through the option string, separating it at commas and marking each
+    * individual option as long as the corresponding PPD option (PageSize,
+    * InputSlot, etc.) is not also set.
     *
-    * For PageSize, we also check for an empty option value since
-    * some versions of MacOS X use it to specify auto-selection
-    * of the media based solely on the size.
+    * For PageSize, we also check for an empty option value since some versions
+    * of MacOS X use it to specify auto-selection of the media based solely on
+    * the size.
     */
 
     for (val = media; *val;)
@@ -215,23 +155,114 @@ cupsMarkOptions(
       */
 
       if (!page_size || !page_size[0])
-	ppd_mark_size(ppd, s);
+      {
+        if (!_cups_strncasecmp(s, "Custom.", 7) || ppdPageSize(ppd, s))
+          ppd_mark_option(ppd, "PageSize", s);
+        else if ((ppd_keyword = _ppdCacheGetPageSize(cache, NULL, s, NULL)) != NULL)
+	  ppd_mark_option(ppd, "PageSize", ppd_keyword);
+      }
 
-      if (cupsGetOption("InputSlot", num_options, options) == NULL)
-	ppd_mark_option(ppd, "InputSlot", s);
+      if (cache && cache->source_option &&
+          !cupsGetOption(cache->source_option, num_options, options) &&
+	  (ppd_keyword = _ppdCacheGetInputSlot(cache, NULL, s)) != NULL)
+	ppd_mark_option(ppd, cache->source_option, ppd_keyword);
 
-      if (cupsGetOption("MediaType", num_options, options) == NULL)
-	ppd_mark_option(ppd, "MediaType", s);
+      if (!cupsGetOption("MediaType", num_options, options) &&
+	  (ppd_keyword = _ppdCacheGetMediaType(cache, NULL, s)) != NULL)
+	ppd_mark_option(ppd, "MediaType", ppd_keyword);
+    }
+  }
 
-      if (cupsGetOption("EFMediaType", num_options, options) == NULL)
-	ppd_mark_option(ppd, "EFMediaType", s);		/* EFI */
+  if (cache)
+  {
+    if (!cupsGetOption("com.apple.print.DocumentTicket.PMSpoolFormat",
+                       num_options, options) &&
+        !cupsGetOption("APPrinterPreset", num_options, options) &&
+        (print_color_mode || print_quality))
+    {
+     /*
+      * Map output-mode and print-quality to a preset...
+      */
 
-      if (cupsGetOption("EFMediaQualityMode", num_options, options) == NULL)
-	ppd_mark_option(ppd, "EFMediaQualityMode", s);	/* EFI */
+      _pwg_print_color_mode_t	pwg_pcm;/* print-color-mode index */
+      _pwg_print_quality_t	pwg_pq;	/* print-quality index */
+      cups_option_t		*preset;/* Current preset option */
 
-      if (!strcasecmp(s, "manual") &&
-	  !cupsGetOption("ManualFeed", num_options, options))
-	ppd_mark_option(ppd, "ManualFeed", "True");
+      if (print_color_mode && !strcmp(print_color_mode, "monochrome"))
+	pwg_pcm = _PWG_PRINT_COLOR_MODE_MONOCHROME;
+      else
+	pwg_pcm = _PWG_PRINT_COLOR_MODE_COLOR;
+
+      if (print_quality)
+      {
+	pwg_pq = atoi(print_quality) - IPP_QUALITY_DRAFT;
+	if (pwg_pq < _PWG_PRINT_QUALITY_DRAFT)
+	  pwg_pq = _PWG_PRINT_QUALITY_DRAFT;
+	else if (pwg_pq > _PWG_PRINT_QUALITY_HIGH)
+	  pwg_pq = _PWG_PRINT_QUALITY_HIGH;
+      }
+      else
+	pwg_pq = _PWG_PRINT_QUALITY_NORMAL;
+
+      if (cache->num_presets[pwg_pcm][pwg_pq] == 0)
+      {
+       /*
+	* Try to find a preset that works so that we maximize the chances of us
+	* getting a good print using IPP attributes.
+	*/
+
+	if (cache->num_presets[pwg_pcm][_PWG_PRINT_QUALITY_NORMAL] > 0)
+	  pwg_pq = _PWG_PRINT_QUALITY_NORMAL;
+	else if (cache->num_presets[_PWG_PRINT_COLOR_MODE_COLOR][pwg_pq] > 0)
+	  pwg_pcm = _PWG_PRINT_COLOR_MODE_COLOR;
+	else
+	{
+	  pwg_pq  = _PWG_PRINT_QUALITY_NORMAL;
+	  pwg_pcm = _PWG_PRINT_COLOR_MODE_COLOR;
+	}
+      }
+
+      if (cache->num_presets[pwg_pcm][pwg_pq] > 0)
+      {
+       /*
+	* Copy the preset options as long as the corresponding names are not
+	* already defined in the IPP request...
+	*/
+
+	for (i = cache->num_presets[pwg_pcm][pwg_pq],
+		 preset = cache->presets[pwg_pcm][pwg_pq];
+	     i > 0;
+	     i --, preset ++)
+	{
+	  if (!cupsGetOption(preset->name, num_options, options))
+	    ppd_mark_option(ppd, preset->name, preset->value);
+	}
+      }
+    }
+
+    if (output_bin && !cupsGetOption("OutputBin", num_options, options) &&
+	(ppd_keyword = _ppdCacheGetOutputBin(cache, output_bin)) != NULL)
+    {
+     /*
+      * Map output-bin to OutputBin...
+      */
+
+      ppd_mark_option(ppd, "OutputBin", ppd_keyword);
+    }
+
+    if (sides && cache->sides_option &&
+        !cupsGetOption(cache->sides_option, num_options, options))
+    {
+     /*
+      * Map sides to duplex option...
+      */
+
+      if (!strcmp(sides, "one-sided"))
+        ppd_mark_option(ppd, cache->sides_option, cache->sides_1sided);
+      else if (!strcmp(sides, "two-sided-long-edge"))
+        ppd_mark_option(ppd, cache->sides_option, cache->sides_2sided_long);
+      else if (!strcmp(sides, "two-sided-short-edge"))
+        ppd_mark_option(ppd, cache->sides_option, cache->sides_2sided_short);
     }
   }
 
@@ -240,101 +271,14 @@ cupsMarkOptions(
   */
 
   for (i = num_options, optptr = options; i > 0; i --, optptr ++)
-    if (!strcasecmp(optptr->name, "media") ||
-        !strcasecmp(optptr->name, "media-col"))
+    if (!_cups_strcasecmp(optptr->name, "media") ||
+        !_cups_strcasecmp(optptr->name, "output-bin") ||
+	!_cups_strcasecmp(optptr->name, "output-mode") ||
+	!_cups_strcasecmp(optptr->name, "print-quality") ||
+	!_cups_strcasecmp(optptr->name, "sides"))
       continue;
-    else if (!strcasecmp(optptr->name, "sides"))
-    {
-      for (j = 0;
-           j < (int)(sizeof(duplex_options) / sizeof(duplex_options[0]));
-	   j ++)
-        if (cupsGetOption(duplex_options[j], num_options, options))
-	  break;
-
-      if (j < (int)(sizeof(duplex_options) / sizeof(duplex_options[0])))
-      {
-       /*
-        * Don't override the PPD option with the IPP attribute...
-	*/
-
-        continue;
-      }
-
-      if (!strcasecmp(optptr->value, "one-sided"))
-      {
-       /*
-        * Mark the appropriate duplex option for one-sided output...
-	*/
-
-        for (j = 0;
-	     j < (int)(sizeof(duplex_options) / sizeof(duplex_options[0]));
-	     j ++)
-	  if ((option = ppdFindOption(ppd, duplex_options[j])) != NULL)
-	    break;
-
-	if (j < (int)(sizeof(duplex_options) / sizeof(duplex_options[0])))
-	{
-          for (k = 0;
-	       k < (int)(sizeof(duplex_one) / sizeof(duplex_one[0]));
-	       k ++)
-            if (ppdFindChoice(option, duplex_one[k]))
-	    {
-	      ppd_mark_option(ppd, duplex_options[j], duplex_one[k]);
-	      break;
-            }
-        }
-      }
-      else if (!strcasecmp(optptr->value, "two-sided-long-edge"))
-      {
-       /*
-        * Mark the appropriate duplex option for two-sided-long-edge output...
-	*/
-
-        for (j = 0;
-	     j < (int)(sizeof(duplex_options) / sizeof(duplex_options[0]));
-	     j ++)
-	  if ((option = ppdFindOption(ppd, duplex_options[j])) != NULL)
-	    break;
-
-	if (j < (int)(sizeof(duplex_options) / sizeof(duplex_options[0])))
-	{
-          for (k = 0;
-	       k < (int)(sizeof(duplex_two_long) / sizeof(duplex_two_long[0]));
-	       k ++)
-            if (ppdFindChoice(option, duplex_two_long[k]))
-	    {
-	      ppd_mark_option(ppd, duplex_options[j], duplex_two_long[k]);
-	      break;
-            }
-        }
-      }
-      else if (!strcasecmp(optptr->value, "two-sided-short-edge"))
-      {
-       /*
-        * Mark the appropriate duplex option for two-sided-short-edge output...
-	*/
-
-        for (j = 0;
-	     j < (int)(sizeof(duplex_options) / sizeof(duplex_options[0]));
-	     j ++)
-	  if ((option = ppdFindOption(ppd, duplex_options[j])) != NULL)
-	    break;
-
-	if (j < (int)(sizeof(duplex_options) / sizeof(duplex_options[0])))
-	{
-          for (k = 0;
-	       k < (int)(sizeof(duplex_two_short) / sizeof(duplex_two_short[0]));
-	       k ++)
-            if (ppdFindChoice(option, duplex_two_short[k]))
-	    {
-	      ppd_mark_option(ppd, duplex_options[j], duplex_two_short[k]);
-	      break;
-            }
-        }
-      }
-    }
-    else if (!strcasecmp(optptr->name, "resolution") ||
-             !strcasecmp(optptr->name, "printer-resolution"))
+    else if (!_cups_strcasecmp(optptr->name, "resolution") ||
+             !_cups_strcasecmp(optptr->name, "printer-resolution"))
     {
       ppd_mark_option(ppd, "Resolution", optptr->value);
       ppd_mark_option(ppd, "SetResolution", optptr->value);
@@ -344,23 +288,18 @@ cupsMarkOptions(
       ppd_mark_option(ppd, "CNRes_PGP", optptr->value);
       	/* Canon */
     }
-    else if (!strcasecmp(optptr->name, "output-bin"))
-    {
-      if (!cupsGetOption("OutputBin", num_options, options))
-        ppd_mark_option(ppd, "OutputBin", optptr->value);
-    }
-    else if (!strcasecmp(optptr->name, "multiple-document-handling"))
+    else if (!_cups_strcasecmp(optptr->name, "multiple-document-handling"))
     {
       if (!cupsGetOption("Collate", num_options, options) &&
           ppdFindOption(ppd, "Collate"))
       {
-        if (strcasecmp(optptr->value, "separate-documents-uncollated-copies"))
+        if (_cups_strcasecmp(optptr->value, "separate-documents-uncollated-copies"))
 	  ppd_mark_option(ppd, "Collate", "True");
 	else
 	  ppd_mark_option(ppd, "Collate", "False");
       }
     }
-    else if (!strcasecmp(optptr->name, "finishings"))
+    else if (!_cups_strcasecmp(optptr->name, "finishings"))
     {
      /*
       * Lookup cupsIPPFinishings attributes for each value...
@@ -401,7 +340,7 @@ cupsMarkOptions(
         ppd_mark_choices(ppd, attr->value);
       }
     }
-    else if (!strcasecmp(optptr->name, "APPrinterPreset"))
+    else if (!_cups_strcasecmp(optptr->name, "APPrinterPreset"))
     {
      /*
       * Lookup APPrinterPreset value...
@@ -416,12 +355,12 @@ cupsMarkOptions(
         ppd_mark_choices(ppd, attr->value);
       }
     }
-    else if (!strcasecmp(optptr->name, "mirror"))
+    else if (!_cups_strcasecmp(optptr->name, "mirror"))
       ppd_mark_option(ppd, "MirrorPrint", optptr->value);
     else
       ppd_mark_option(ppd, optptr->name, optptr->value);
 
-  debug_marked(ppd, "After...");
+  ppd_debug_marked(ppd, "After...");
 
   return (ppdConflicts(ppd) > 0);
 }
@@ -442,11 +381,11 @@ ppdFindChoice(ppd_option_t *o,		/* I - Pointer to option */
   if (!o || !choice)
     return (NULL);
 
-  if (choice[0] == '{' || !strncasecmp(choice, "Custom.", 7))
+  if (choice[0] == '{' || !_cups_strncasecmp(choice, "Custom.", 7))
     choice = "Custom";
 
   for (i = o->num_choices, c = o->choices; i > 0; i --, c ++)
-    if (!strcasecmp(c->choice, choice))
+    if (!_cups_strcasecmp(c->choice, choice))
       return (c);
 
   return (NULL);
@@ -525,7 +464,7 @@ ppdFindOption(ppd_file_t *ppd,		/* I - PPD file data */
       for (j = group->num_options, optptr = group->options;
            j > 0;
 	   j --, optptr ++)
-        if (!strcasecmp(optptr->keyword, option))
+        if (!_cups_strcasecmp(optptr->keyword, option))
 	  return (optptr);
 
     return (NULL);
@@ -581,7 +520,10 @@ ppdMarkDefaults(ppd_file_t *ppd)	/* I - PPD file record */
   for (c = (ppd_choice_t *)cupsArrayFirst(ppd->marked);
        c;
        c = (ppd_choice_t *)cupsArrayNext(ppd->marked))
+  {
     cupsArrayRemove(ppd->marked, c);
+    c->marked = 0;
+  }
 
  /*
   * Then repopulate it with the defaults...
@@ -668,6 +610,7 @@ ppdNextOption(ppd_file_t *ppd)		/* I - PPD file */
  * This function looks for strings of the form:
  *
  *     *option choice ... *optionN choiceN
+ *     property value ... propertyN valueN
  *
  * It stops when it finds a string that doesn't match this format.
  */
@@ -676,10 +619,11 @@ int					/* O  - Number of options */
 _ppdParseOptions(
     const char    *s,			/* I  - String to parse */
     int           num_options,		/* I  - Number of options */
-    cups_option_t **options)		/* IO - Options */
+    cups_option_t **options,		/* IO - Options */
+    _ppd_parse_t  which)		/* I  - What to parse */
 {
-  char	option[PPD_MAX_NAME],		/* Current option */
-	choice[PPD_MAX_NAME],		/* Current choice */
+  char	option[PPD_MAX_NAME * 2 + 1],	/* Current option/property */
+	choice[PPD_MAX_NAME],		/* Current choice/value */
 	*ptr;				/* Pointer into option or choice */
 
 
@@ -687,8 +631,8 @@ _ppdParseOptions(
     return (num_options);
 
  /*
-  * Read all of the "*Option Choice" pairs from the string, marking PPD
-  * options as we go...
+  * Read all of the "*Option Choice" and "property value" pairs from the
+  * string, add them to an options array as we go...
   */
 
   while (*s)
@@ -697,22 +641,18 @@ _ppdParseOptions(
     * Skip leading whitespace...
     */
 
-    while (isspace(*s & 255))
+    while (_cups_isspace(*s))
       s ++;
 
-    if (*s != '*')
-      break;
-
    /*
-    * Get the option name...
+    * Get the option/property name...
     */
 
-    s ++;
     ptr = option;
-    while (*s && !isspace(*s & 255) && ptr < (option + sizeof(option) - 1))
+    while (*s && !_cups_isspace(*s) && ptr < (option + sizeof(option) - 1))
       *ptr++ = *s++;
 
-    if (ptr == s)
+    if (ptr == s || !_cups_isspace(*s))
       break;
 
     *ptr = '\0';
@@ -721,15 +661,18 @@ _ppdParseOptions(
     * Get the choice...
     */
 
-    while (isspace(*s & 255))
+    while (_cups_isspace(*s))
       s ++;
 
     if (!*s)
       break;
 
     ptr = choice;
-    while (*s && !isspace(*s & 255) && ptr < (choice + sizeof(choice) - 1))
+    while (*s && !_cups_isspace(*s) && ptr < (choice + sizeof(choice) - 1))
       *ptr++ = *s++;
+
+    if (*s && !_cups_isspace(*s))
+      break;
 
     *ptr = '\0';
 
@@ -737,7 +680,10 @@ _ppdParseOptions(
     * Add it to the options array...
     */
 
-    num_options = cupsAddOption(option, choice, num_options, options);
+    if (option[0] == '*' && which != _PPD_PARSE_PROPERTIES)
+      num_options = cupsAddOption(option + 1, choice, num_options, options);
+    else if (option[0] != '*' && which != _PPD_PARSE_OPTIONS)
+      num_options = cupsAddOption(option, choice, num_options, options);
   }
 
   return (num_options);
@@ -746,11 +692,11 @@ _ppdParseOptions(
 
 #ifdef DEBUG
 /*
- * 'debug_marked()' - Output the marked array to stdout...
+ * 'ppd_debug_marked()' - Output the marked array to stdout...
  */
 
 static void
-debug_marked(ppd_file_t *ppd,		/* I - PPD file data */
+ppd_debug_marked(ppd_file_t *ppd,		/* I - PPD file data */
              const char *title)		/* I - Title for list */
 {
   ppd_choice_t	*c;			/* Current choice */
@@ -780,7 +726,7 @@ ppd_defaults(ppd_file_t  *ppd,		/* I - PPD file */
 
 
   for (i = g->num_options, o = g->options; i > 0; i --, o ++)
-    if (strcasecmp(o->keyword, "PageRegion") != 0)
+    if (_cups_strcasecmp(o->keyword, "PageRegion") != 0)
       ppdMarkOption(ppd, o->keyword, o->defchoice);
 
   for (i = g->num_subgroups, sg = g->subgroups; i > 0; i --, sg ++)
@@ -806,7 +752,7 @@ ppd_mark_choices(ppd_file_t *ppd,	/* I - PPD file */
     return;
 
   options     = NULL;
-  num_options = _ppdParseOptions(s, 0, &options);
+  num_options = _ppdParseOptions(s, 0, &options, 0);
 
   for (i = num_options, option = options; i > 0; i --, option ++)
     ppd_mark_option(ppd, option->name, option->value);
@@ -840,8 +786,10 @@ ppd_mark_option(ppd_file_t *ppd,	/* I - PPD file */
   * it clears the regular InputSlot choices...
   */
 
-  if (!strcasecmp(option, "AP_D_InputSlot"))
+  if (!_cups_strcasecmp(option, "AP_D_InputSlot"))
   {
+    cupsArraySave(ppd->options);
+
     if ((o = ppdFindOption(ppd, "InputSlot")) != NULL)
     {
       key.option = o;
@@ -851,18 +799,26 @@ ppd_mark_option(ppd_file_t *ppd,	/* I - PPD file */
         cupsArrayRemove(ppd->marked, oldc);
       }
     }
+
+    cupsArrayRestore(ppd->options);
   }
 
  /*
   * Check for custom options...
   */
 
-  if ((o = ppdFindOption(ppd, option)) == NULL)
+  cupsArraySave(ppd->options);
+
+  o = ppdFindOption(ppd, option);
+
+  cupsArrayRestore(ppd->options);
+
+  if (!o)
     return;
 
   loc = localeconv();
 
-  if (!strncasecmp(choice, "Custom.", 7))
+  if (!_cups_strncasecmp(choice, "Custom.", 7))
   {
    /*
     * Handle a custom option...
@@ -871,7 +827,7 @@ ppd_mark_option(ppd_file_t *ppd,	/* I - PPD file */
     if ((c = ppdFindChoice(o, "Custom")) == NULL)
       return;
 
-    if (!strcasecmp(option, "PageSize"))
+    if (!_cups_strcasecmp(option, "PageSize"))
     {
      /*
       * Handle custom page sizes...
@@ -911,16 +867,16 @@ ppd_mark_option(ppd_file_t *ppd,	/* I - PPD file */
 
               if (units)
 	      {
-        	if (!strcasecmp(units, "cm"))
-	          cparam->current.custom_points *= 72.0f / 2.54f;	      
-        	else if (!strcasecmp(units, "mm"))
-	          cparam->current.custom_points *= 72.0f / 25.4f;	      
-        	else if (!strcasecmp(units, "m"))
-	          cparam->current.custom_points *= 72.0f / 0.0254f;	      
-        	else if (!strcasecmp(units, "in"))
-	          cparam->current.custom_points *= 72.0f;	      
-        	else if (!strcasecmp(units, "ft"))
-	          cparam->current.custom_points *= 12.0f * 72.0f;	      
+        	if (!_cups_strcasecmp(units, "cm"))
+	          cparam->current.custom_points *= 72.0f / 2.54f;
+        	else if (!_cups_strcasecmp(units, "mm"))
+	          cparam->current.custom_points *= 72.0f / 25.4f;
+        	else if (!_cups_strcasecmp(units, "m"))
+	          cparam->current.custom_points *= 72.0f / 0.0254f;
+        	else if (!_cups_strcasecmp(units, "in"))
+	          cparam->current.custom_points *= 72.0f;
+        	else if (!_cups_strcasecmp(units, "ft"))
+	          cparam->current.custom_points *= 12.0f * 72.0f;
               }
 	      break;
 
@@ -988,15 +944,15 @@ ppd_mark_option(ppd_file_t *ppd,	/* I - PPD file */
 
 	      if (units)
 	      {
-        	if (!strcasecmp(units, "cm"))
+        	if (!_cups_strcasecmp(units, "cm"))
 		  cparam->current.custom_points *= 72.0f / 2.54f;
-        	else if (!strcasecmp(units, "mm"))
+        	else if (!_cups_strcasecmp(units, "mm"))
 		  cparam->current.custom_points *= 72.0f / 25.4f;
-        	else if (!strcasecmp(units, "m"))
+        	else if (!_cups_strcasecmp(units, "m"))
 		  cparam->current.custom_points *= 72.0f / 0.0254f;
-        	else if (!strcasecmp(units, "in"))
+        	else if (!_cups_strcasecmp(units, "in"))
 		  cparam->current.custom_points *= 72.0f;
-        	else if (!strcasecmp(units, "ft"))
+        	else if (!_cups_strcasecmp(units, "ft"))
 		  cparam->current.custom_points *= 12.0f * 72.0f;
 	      }
 	      break;
@@ -1022,7 +978,7 @@ ppd_mark_option(ppd_file_t *ppd,	/* I - PPD file */
   else
   {
     for (i = o->num_choices, c = o->choices; i > 0; i --, c ++)
-      if (!strcasecmp(c->choice, choice))
+      if (!_cups_strcasecmp(c->choice, choice))
         break;
 
     if (!i)
@@ -1045,14 +1001,14 @@ ppd_mark_option(ppd_file_t *ppd,	/* I - PPD file */
       cupsArrayRemove(ppd->marked, oldc);
     }
 
-    if (!strcasecmp(option, "PageSize") || !strcasecmp(option, "PageRegion"))
+    if (!_cups_strcasecmp(option, "PageSize") || !_cups_strcasecmp(option, "PageRegion"))
     {
      /*
       * Mark current page size...
       */
 
       for (j = 0; j < ppd->num_sizes; j ++)
-	ppd->sizes[j].marked = !strcasecmp(ppd->sizes[j].name,
+	ppd->sizes[j].marked = !_cups_strcasecmp(ppd->sizes[j].name,
 		                           choice);
 
      /*
@@ -1060,7 +1016,9 @@ ppd_mark_option(ppd_file_t *ppd,	/* I - PPD file */
       * appropriate...
       */
 
-      if (!strcasecmp(option, "PageSize"))
+      cupsArraySave(ppd->options);
+
+      if (!_cups_strcasecmp(option, "PageSize"))
       {
 	if ((o = ppdFindOption(ppd, "PageRegion")) != NULL)
         {
@@ -1084,12 +1042,16 @@ ppd_mark_option(ppd_file_t *ppd,	/* I - PPD file */
           }
         }
       }
+
+      cupsArrayRestore(ppd->options);
     }
-    else if (!strcasecmp(option, "InputSlot"))
+    else if (!_cups_strcasecmp(option, "InputSlot"))
     {
      /*
       * Unmark ManualFeed option...
       */
+
+      cupsArraySave(ppd->options);
 
       if ((o = ppdFindOption(ppd, "ManualFeed")) != NULL)
       {
@@ -1100,13 +1062,17 @@ ppd_mark_option(ppd_file_t *ppd,	/* I - PPD file */
           cupsArrayRemove(ppd->marked, oldc);
         }
       }
+
+      cupsArrayRestore(ppd->options);
     }
-    else if (!strcasecmp(option, "ManualFeed") &&
-	     !strcasecmp(choice, "True"))
+    else if (!_cups_strcasecmp(option, "ManualFeed") &&
+	     !_cups_strcasecmp(choice, "True"))
     {
      /*
       * Unmark InputSlot option...
       */
+
+      cupsArraySave(ppd->options);
 
       if ((o = ppdFindOption(ppd, "InputSlot")) != NULL)
       {
@@ -1117,6 +1083,8 @@ ppd_mark_option(ppd_file_t *ppd,	/* I - PPD file */
           cupsArrayRemove(ppd->marked, oldc);
         }
       }
+
+      cupsArrayRestore(ppd->options);
     }
   }
 
@@ -1127,106 +1095,5 @@ ppd_mark_option(ppd_file_t *ppd,	/* I - PPD file */
 
 
 /*
- * 'ppd_mark_size()' - Quickly mark a page size without checking for conflicts.
- *
- * This function is also responsible for mapping PWG/ISO/IPP size names to the
- * PPD file...
- */
-
-static void
-ppd_mark_size(ppd_file_t *ppd,		/* I - PPD file */
-              const char *size)		/* I - Size name */
-{
-  int			i;		/* Looping var */
-  _cups_pwg_media_t	*pwgmedia;	/* PWG media information */
-  ppd_size_t		*ppdsize;	/* Current PPD size */
-  double		dw, dl;		/* Difference in width and height */
-  double		width,		/* Width to find */
-			length;		/* Length to find */
-  char			width_str[256],	/* Width in size name */
-			length_str[256],/* Length in size name */
-			units[256],	/* Units in size name */
-			custom[256];	/* Custom size */
-  struct lconv		*loc;		/* Localization data */
-
-
- /*
-  * See if this is a PPD size...
-  */
-
-  if (!strncasecmp(size, "Custom.", 7) || ppdPageSize(ppd, size))
-  {
-    ppd_mark_option(ppd, "PageSize", size);
-    return;
-  }
-
- /*
-  * Nope, try looking up the PWG or legacy (IPP/ISO) size name...
-  */
-
-  if ((pwgmedia = _cupsPWGMediaByName(size)) == NULL)
-    pwgmedia = _cupsPWGMediaByLegacy(size);
-
-  if (pwgmedia)
-  {
-    width  = pwgmedia->width;
-    length = pwgmedia->length;
-  }
-  else if (sscanf(size, "%*[^_]_%*[^_]_%255[0-9.]x%255[0-9.]%s", width_str,
-                  length_str, units) == 3)
-  {
-   /*
-    * Got a "self-describing" name that isn't in our table...
-    */
-
-    loc    = localeconv();
-    width  = _cupsStrScand(width_str, NULL, loc);
-    length = _cupsStrScand(length_str, NULL, loc);
-
-    if (!strcmp(units, "in"))
-    {
-      width  *= 72.0;
-      length *= 72.0;
-    }
-    else if (!strcmp(units, "mm"))
-    {
-      width  *= 25.4 / 72.0;
-      length *= 25.4 / 72.0;
-    }
-    else
-      return;
-  }
-  else
-    return;    
-
- /*
-  * Search the PPD file for a matching size...
-  */
-
-  for (i = ppd->num_sizes, ppdsize = ppd->sizes; i > 0; i --, ppdsize ++)
-  {
-    dw = ppdsize->width - width;
-    dl = ppdsize->length - length;
-
-    if (dw > -5.0 && dw < 5.0 && dl > -5.0 && dl < 5.0)
-    {
-      ppd_mark_option(ppd, "PageSize", ppdsize->name);
-      return;
-    }
-  }
-
- /*
-  * No match found; if custom sizes are supported, set a custom size...
-  */
-
-  if (ppd->variable_sizes)
-  {
-    snprintf(custom, sizeof(custom), "Custom.%dx%d", (int)width, (int)length);
-    ppd_mark_option(ppd, "PageSize", custom);
-  }
-}
-
-
-/*
- * End of "$Id: mark.c 8210 2009-01-09 02:30:26Z mike $".
+ * End of "$Id: mark.c 9042 2010-03-24 00:45:34Z mike $".
  */

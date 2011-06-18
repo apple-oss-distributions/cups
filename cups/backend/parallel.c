@@ -1,9 +1,9 @@
 /*
  * "$Id: parallel.c 7810 2008-07-29 01:11:15Z mike $"
  *
- *   Parallel port backend for the Common UNIX Printing System (CUPS).
+ *   Parallel port backend for CUPS.
  *
- *   Copyright 2007-2008 by Apple Inc.
+ *   Copyright 2007-2011 by Apple Inc.
  *   Copyright 1997-2007 by Easy Software Products, all rights reserved.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -59,7 +59,7 @@
  */
 
 static void	list_devices(void);
-static void	side_cb(int print_fd, int device_fd, int snmp_fd,
+static int	side_cb(int print_fd, int device_fd, int snmp_fd,
 		        http_addr_t *addr, int use_bc);
 
 
@@ -85,7 +85,7 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
 		device_fd,		/* Parallel device */
 		use_bc;			/* Read back-channel data? */
   int		copies;			/* Number of copies to print */
-  size_t	tbytes;			/* Total number of bytes written */
+  ssize_t	tbytes;			/* Total number of bytes written */
   struct termios opts;			/* Parallel port options */
 #if defined(HAVE_SIGACTION) && !defined(HAVE_SIGSET)
   struct sigaction action;		/* Actions for POSIX signals */
@@ -124,7 +124,7 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
   else if (argc < 6 || argc > 7)
   {
     _cupsLangPrintf(stderr,
-		    _("Usage: %s job-id user title copies options [file]\n"),
+		    _("Usage: %s job-id user title copies options [file]"),
 		    argv[0]);
     return (CUPS_BACKEND_FAILED);
   }
@@ -147,9 +147,7 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
 
     if ((print_fd = open(argv[6], O_RDONLY)) < 0)
     {
-      _cupsLangPrintf(stderr,
-                      _("ERROR: Unable to open print file \"%s\": %s\n"),
-		      argv[6], strerror(errno));
+      _cupsLangPrintError("ERROR", _("Unable to open print file"));
       return (CUPS_BACKEND_FAILED);
     }
 
@@ -217,9 +215,9 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
 	* available printer in the class.
 	*/
 
-        _cupsLangPuts(stderr,
-	              _("INFO: Unable to contact printer, queuing on next "
-			"printer in class...\n"));
+        _cupsLangPrintFilter(stderr, "INFO",
+			     _("Unable to contact printer, queuing on next "
+			       "printer in class."));
 
        /*
         * Sleep 5 seconds to keep the job from requeuing too rapidly...
@@ -232,22 +230,20 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
 
       if (errno == EBUSY)
       {
-        _cupsLangPuts(stderr,
-	              _("INFO: Printer busy; will retry in 30 seconds...\n"));
+        _cupsLangPrintFilter(stderr, "INFO",
+	                     _("Printer busy; will retry in 30 seconds."));
 	sleep(30);
       }
       else if (errno == ENXIO || errno == EIO || errno == ENOENT)
       {
-        _cupsLangPuts(stderr,
-	              _("INFO: Printer not connected; will retry in 30 "
-		        "seconds...\n"));
+        _cupsLangPrintFilter(stderr, "INFO",
+	                     _("Printer not connected; will retry in 30 "
+		               "seconds."));
 	sleep(30);
       }
       else
       {
-	_cupsLangPrintf(stderr,
-		        _("ERROR: Unable to open device file \"%s\": %s\n"),
-			resource, strerror(errno));
+	_cupsLangPrintError("ERROR", _("Unable to open device file"));
 	return (CUPS_BACKEND_FAILED);
       }
     }
@@ -284,16 +280,10 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
       lseek(print_fd, 0, SEEK_SET);
     }
 
-    tbytes = backendRunLoop(print_fd, device_fd, -1, NULL, use_bc, side_cb);
+    tbytes = backendRunLoop(print_fd, device_fd, -1, NULL, use_bc, 1, side_cb);
 
     if (print_fd != 0 && tbytes >= 0)
-      _cupsLangPrintf(stderr,
-#ifdef HAVE_LONG_LONG
-		      _("INFO: Sent print file, %lld bytes...\n"),
-#else
-		      _("INFO: Sent print file, %ld bytes...\n"),
-#endif /* HAVE_LONG_LONG */
-		      CUPS_LLCAST tbytes);
+      _cupsLangPrintFilter(stderr, "INFO", _("Print file sent."));
   }
 
  /*
@@ -305,7 +295,7 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
   if (print_fd != 0)
     close(print_fd);
 
-  return (tbytes < 0 ? CUPS_BACKEND_FAILED : CUPS_BACKEND_OK);
+  return (CUPS_BACKEND_OK);
 }
 
 
@@ -615,7 +605,7 @@ list_devices(void)
  * 'side_cb()' - Handle side-channel requests...
  */
 
-static void
+static int				/* O - 0 on success, -1 on error */
 side_cb(int         print_fd,		/* I - Print file */
         int         device_fd,		/* I - Device file */
         int         snmp_fd,		/* I - SNMP socket (unused) */
@@ -634,10 +624,7 @@ side_cb(int         print_fd,		/* I - Print file */
   datalen = sizeof(data);
 
   if (cupsSideChannelRead(&command, &status, data, &datalen, 1.0))
-  {
-    _cupsLangPuts(stderr, _("WARNING: Failed to read side-channel request!\n"));
-    return;
-  }
+    return (-1);
 
   switch (command)
   {
@@ -680,7 +667,7 @@ side_cb(int         print_fd,		/* I - Print file */
 	break;
   }
 
-  cupsSideChannelWrite(command, status, data, datalen, 1.0);
+  return (cupsSideChannelWrite(command, status, data, datalen, 1.0));
 }
 
 

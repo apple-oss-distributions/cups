@@ -1,9 +1,9 @@
 /*
- * "$Id: gziptoany.c 6649 2007-07-11 21:46:42Z mike $"
+ * "$Id: gziptoany.c 9048 2010-03-24 08:07:15Z mike $"
  *
- *   GZIP/raw pre-filter for the Common UNIX Printing System (CUPS).
+ *   GZIP/raw pre-filter for CUPS.
  *
- *   Copyright 2007 by Apple Inc.
+ *   Copyright 2007-2011 by Apple Inc.
  *   Copyright 1993-2007 by Easy Software Products.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -23,11 +23,7 @@
  * Include necessary headers...
  */
 
-#include <cups/file.h>
-#include <cups/string.h>
-#include <cups/i18n.h>
-#include <stdlib.h>
-#include <errno.h>
+#include <cups/cups-private.h>
 
 
 /*
@@ -50,8 +46,9 @@ main(int  argc,				/* I - Number of command-line arguments */
 
   if (argc != 7)
   {
-    fprintf(stderr, _("Usage: %s job-id user title copies options file\n"),
-            argv[0]);
+    _cupsLangPrintf(stderr,
+                    _("Usage: %s job-id user title copies options file"),
+                    argv[0]);
     return (1);
   }
 
@@ -71,16 +68,13 @@ main(int  argc,				/* I - Number of command-line arguments */
 
   if ((fp = cupsFileOpen(argv[6], "r")) == NULL)
   {
-    fprintf(stderr, _("ERROR: Unable to open file \"%s\": %s\n"), argv[6],
-            strerror(errno));
+    _cupsLangPrintError("ERROR", _("Unable to open print file"));
     return (1);
   }
 
  /*
   * Copy the file to stdout...
   */
-
-  setbuf(stdout, NULL);
 
   while (copies > 0)
   {
@@ -90,11 +84,11 @@ main(int  argc,				/* I - Number of command-line arguments */
     cupsFileRewind(fp);
 
     while ((bytes = cupsFileRead(fp, buffer, sizeof(buffer))) > 0)
-      if (fwrite(buffer, 1, bytes, stdout) < bytes)
+      if (write(1, buffer, bytes) < bytes)
       {
-	fprintf(stderr,
-	        _("ERROR: Unable to write uncompressed document data: %s\n"),
-        	strerror(ferror(stdout)));
+	_cupsLangPrintFilter(stderr, "ERROR",
+			     _("Unable to write uncompressed print data: %s"),
+			     strerror(errno));
 	cupsFileClose(fp);
 
 	return (1);
@@ -114,5 +108,5 @@ main(int  argc,				/* I - Number of command-line arguments */
 
 
 /*
- * End of "$Id: gziptoany.c 6649 2007-07-11 21:46:42Z mike $".
+ * End of "$Id: gziptoany.c 9048 2010-03-24 08:07:15Z mike $".
  */

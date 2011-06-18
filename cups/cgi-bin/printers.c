@@ -1,9 +1,9 @@
 /*
  * "$Id: printers.c 7940 2008-09-16 00:45:16Z mike $"
  *
- *   Printer status CGI for the Common UNIX Printing System (CUPS).
+ *   Printer status CGI for CUPS.
  *
- *   Copyright 2007-2008 by Apple Inc.
+ *   Copyright 2007-2011 by Apple Inc.
  *   Copyright 1997-2006 by Easy Software Products.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -73,6 +73,7 @@ main(int  argc,				/* I - Number of command-line arguments */
   */
 
   cgiSetVariable("SECTION", "printers");
+  cgiSetVariable("REFRESH_PAGE", "");
 
  /*
   * See if we are displaying a printer or all printers...
@@ -147,7 +148,21 @@ main(int  argc,				/* I - Number of command-line arguments */
   }
   else if (printer)
   {
-    if (!strcmp(op, "start-printer"))
+    if (!*op)
+    {
+      const char *server_port = getenv("SERVER_PORT");
+					/* Port number string */
+      int	port = atoi(server_port ? server_port : "0");
+      					/* Port number */
+      char	uri[1024];		/* URL */
+
+      httpAssembleURIf(HTTP_URI_CODING_ALL, uri, sizeof(uri),
+		       getenv("HTTPS") ? "https" : "http", NULL,
+		       getenv("SERVER_NAME"), port, "/printers/%s", printer);
+
+      printf("Location: %s\n\n", uri);
+    }
+    else if (!strcmp(op, "start-printer"))
       do_printer_op(http, printer, IPP_RESUME_PRINTER,
                     cgiText(_("Resume Printer")));
     else if (!strcmp(op, "stop-printer"))
@@ -159,15 +174,15 @@ main(int  argc,				/* I - Number of command-line arguments */
       do_printer_op(http, printer, CUPS_REJECT_JOBS, cgiText(_("Reject Jobs")));
     else if (!strcmp(op, "purge-jobs"))
       do_printer_op(http, printer, IPP_PURGE_JOBS, cgiText(_("Purge Jobs")));
-    else if (!strcasecmp(op, "print-self-test-page"))
+    else if (!_cups_strcasecmp(op, "print-self-test-page"))
       cgiPrintCommand(http, printer, "PrintSelfTestPage",
                       cgiText(_("Print Self-Test Page")));
-    else if (!strcasecmp(op, "clean-print-heads"))
+    else if (!_cups_strcasecmp(op, "clean-print-heads"))
       cgiPrintCommand(http, printer, "Clean all",
                       cgiText(_("Clean Print Heads")));
-    else if (!strcasecmp(op, "print-test-page"))
+    else if (!_cups_strcasecmp(op, "print-test-page"))
       cgiPrintTestPage(http, printer);
-    else if (!strcasecmp(op, "move-jobs"))
+    else if (!_cups_strcasecmp(op, "move-jobs"))
       cgiMoveJobs(http, printer, 0);
     else
     {
@@ -383,7 +398,7 @@ show_all_printers(http_t     *http,	/* I - Connection to server */
     cgiSetVariable("TOTAL", val);
 
     if ((var = cgiGetVariable("ORDER")) != NULL)
-      ascending = !strcasecmp(var, "asc");
+      ascending = !_cups_strcasecmp(var, "asc");
     else
       ascending = 1;
 

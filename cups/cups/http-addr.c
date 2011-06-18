@@ -1,9 +1,9 @@
 /*
  * "$Id: http-addr.c 7910 2008-09-06 00:25:17Z mike $"
  *
- *   HTTP address routines for the Common UNIX Printing System (CUPS).
+ *   HTTP address routines for CUPS.
  *
- *   Copyright 2007-2009 by Apple Inc.
+ *   Copyright 2007-2011 by Apple Inc.
  *   Copyright 1997-2006 by Easy Software Products, all rights reserved.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -19,6 +19,7 @@
  *   httpAddrLocalhost() - Check for the local loopback address.
  *   httpAddrLookup()    - Lookup the hostname associated with the address.
  *   _httpAddrPort()     - Get the port number associated with an address.
+ *   _httpAddrSetPort()  - Set the port number associated with an address.
  *   httpAddrString()    - Convert an IP address to a dotted string.
  *   httpGetHostByName() - Lookup a hostname or IP address, and return
  *                         address records for the specified name.
@@ -29,14 +30,16 @@
  * Include necessary headers...
  */
 
-#include "http-private.h"
-#include "globals.h"
-#include "debug.h"
-#include <stdlib.h>
-#include <stddef.h>
+#include "cups-private.h"
 #ifdef HAVE_RESOLV_H
 #  include <resolv.h>
 #endif /* HAVE_RESOLV_H */
+#ifdef HAVE_COREFOUNDATION
+#  include <CoreFoundation/CoreFoundation.h>
+#endif /* HAVE_COREFOUNDATION */
+#ifdef HAVE_SYSTEMCONFIGURATION
+#  include <SystemConfiguration/SystemConfiguration.h>
+#endif /* HAVE_SYSTEMCONFIGURATION */
 
 
 /*
@@ -316,6 +319,27 @@ _httpAddrPort(http_addr_t *addr)	/* I - Address */
 
 
 /*
+ * '_httpAddrSetPort()' - Set the port number associated with an address.
+ */
+
+void
+_httpAddrSetPort(http_addr_t *addr,	/* I - Address */
+                 int         port)	/* I - Port */
+{
+  if (!addr || port <= 0)
+    return;
+
+#ifdef AF_INET6
+  if (addr->addr.sa_family == AF_INET6)
+    addr->ipv6.sin6_port = htons(port);
+  else
+#endif /* AF_INET6 */
+  if (addr->addr.sa_family == AF_INET)
+    addr->ipv4.sin_port = htons(port);
+}
+
+
+/*
  * 'httpAddrString()' - Convert an address to a numeric string.
  *
  * @since CUPS 1.2/Mac OS X 10.5@
@@ -358,8 +382,11 @@ httpAddrString(const http_addr_t *addr,	/* I - Address to convert */
 #ifdef AF_INET6
   else if (addr->addr.sa_family == AF_INET6)
   {
+    char	*sptr,			/* Pointer into string */
+		temps[64];		/* Temporary string for address */
+
 #  ifdef HAVE_GETNAMEINFO
-    if (getnameinfo(&addr->addr, httpAddrLength(addr), s, slen,
+    if (getnameinfo(&addr->addr, httpAddrLength(addr), temps, sizeof(temps),
                     NULL, 0, NI_NUMERICHOST))
     {
      /*
@@ -371,29 +398,36 @@ httpAddrString(const http_addr_t *addr,	/* I - Address to convert */
 
       return (NULL);
     }
+    else if ((sptr = strchr(temps, '%')) != NULL)
+    {
+     /*
+      * Convert "%zone" to "+zone" to match URI form...
+      */
+
+      *sptr = '+';
+    }
+
 #  else
-    char	*sptr;			/* Pointer into string */
     int		i;			/* Looping var */
     unsigned	temp;			/* Current value */
     const char	*prefix;		/* Prefix for address */
 
 
     prefix = "";
-    for (sptr = s, i = 0; i < 4 && addr->ipv6.sin6_addr.s6_addr32[i]; i ++)
+    for (sptr = temps, i = 0; i < 4 && addr->ipv6.sin6_addr.s6_addr32[i]; i ++)
     {
       temp = ntohl(addr->ipv6.sin6_addr.s6_addr32[i]);
 
-      snprintf(sptr, slen, "%s%x", prefix, (temp >> 16) & 0xffff);
+      snprintf(sptr, sizeof(temps) - (sptr - temps), "%s%x", prefix,
+               (temp >> 16) & 0xffff);
       prefix = ":";
-      slen -= strlen(sptr);
       sptr += strlen(sptr);
 
       temp &= 0xffff;
 
       if (temp || i == 3 || addr->ipv6.sin6_addr.s6_addr32[i + 1])
       {
-        snprintf(sptr, slen, "%s%x", prefix, temp);
-	slen -= strlen(sptr);
+        snprintf(sptr, sizeof(temps) - (sptr - temps), "%s%x", prefix, temp);
 	sptr += strlen(sptr);
       }
     }
@@ -405,24 +439,24 @@ httpAddrString(const http_addr_t *addr,	/* I - Address to convert */
 
       if (i < 4)
       {
-        snprintf(sptr, slen, "%s:", prefix);
+        snprintf(sptr, sizeof(temps) - (sptr - temps), "%s:", prefix);
 	prefix = ":";
-	slen -= strlen(sptr);
 	sptr += strlen(sptr);
 
 	for (; i < 4; i ++)
 	{
           temp = ntohl(addr->ipv6.sin6_addr.s6_addr32[i]);
 
-          if ((temp & 0xffff0000) || addr->ipv6.sin6_addr.s6_addr32[i - 1])
+          if ((temp & 0xffff0000) ||
+	      (i > 0 && addr->ipv6.sin6_addr.s6_addr32[i - 1]))
 	  {
-            snprintf(sptr, slen, "%s%x", prefix, (temp >> 16) & 0xffff);
-	    slen -= strlen(sptr);
+            snprintf(sptr, sizeof(temps) - (sptr - temps), "%s%x", prefix,
+	             (temp >> 16) & 0xffff);
 	    sptr += strlen(sptr);
           }
 
-          snprintf(sptr, slen, "%s%x", prefix, temp & 0xffff);
-	  slen -= strlen(sptr);
+          snprintf(sptr, sizeof(temps) - (sptr - temps), "%s%x", prefix,
+	           temp & 0xffff);
 	  sptr += strlen(sptr);
 	}
       }
@@ -432,9 +466,7 @@ httpAddrString(const http_addr_t *addr,	/* I - Address to convert */
         * Empty address...
 	*/
 
-        strlcpy(s, "::", slen);
-	sptr = s + 2;
-	slen -= 2;
+        strlcpy(temps, "::", sizeof(temps));
       }
       else
       {
@@ -442,12 +474,16 @@ httpAddrString(const http_addr_t *addr,	/* I - Address to convert */
 	* Empty at end...
 	*/
 
-        strlcpy(sptr, "::", slen);
-	sptr += 2;
-	slen -= 2;
+        strlcpy(sptr, "::", sizeof(temps) - (sptr - temps));
       }
     }
 #  endif /* HAVE_GETNAMEINFO */
+
+   /*
+    * Add "[v1." and "]" around IPv6 address to convert to URI form.
+    */
+
+    snprintf(s, slen, "[v1.%s]", temps);
   }
 #endif /* AF_INET6 */
   else
@@ -583,9 +619,6 @@ httpGetHostname(http_t *http,		/* I - HTTP connection or NULL */
                 char   *s,		/* I - String buffer for name */
                 int    slen)		/* I - Size of buffer */
 {
-  struct hostent	*host;		/* Host entry to get FQDN */
-
-
   if (!s || slen <= 1)
     return (NULL);
 
@@ -607,12 +640,50 @@ httpGetHostname(http_t *http,		/* I - HTTP connection or NULL */
 
     if (!strchr(s, '.'))
     {
+#ifdef HAVE_SCDYNAMICSTORECOPYCOMPUTERNAME
+     /*
+      * The hostname is not a FQDN, so use the local hostname from the
+      * SystemConfiguration framework...
+      */
+
+      SCDynamicStoreRef	sc = SCDynamicStoreCreate(kCFAllocatorDefault,
+                                                  CFSTR("libcups"), NULL, NULL);
+					/* System configuration data */
+      CFStringRef	local = sc ? SCDynamicStoreCopyLocalHostName(sc) : NULL;
+					/* Local host name */
+      char		localStr[1024];	/* Local host name C string */
+
+      if (local && CFStringGetCString(local, localStr, sizeof(localStr),
+                                      kCFStringEncodingUTF8))
+      {
+       /*
+        * Append ".local." to the hostname we get...
+	*/
+
+        snprintf(s, slen, "%s.local.", localStr);
+      }
+
+      if (local)
+        CFRelease(local);
+      if (sc)
+        CFRelease(sc);
+
+#else
      /*
       * The hostname is not a FQDN, so look it up...
       */
 
+      struct hostent	*host;		/* Host entry to get FQDN */
+
       if ((host = gethostbyname(s)) != NULL && host->h_name)
+      {
+       /*
+        * Use the resolved hostname...
+	*/
+
 	strlcpy(s, host->h_name, slen);
+      }
+#endif /* HAVE_SCDYNAMICSTORECOPYCOMPUTERNAME */
     }
   }
 

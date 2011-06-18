@@ -1,9 +1,9 @@
 /*
  * "$Id: http-addrlist.c 7910 2008-09-06 00:25:17Z mike $"
  *
- *   HTTP address list routines for the Common UNIX Printing System (CUPS).
+ *   HTTP address list routines for CUPS.
  *
- *   Copyright 2007-2009 by Apple Inc.
+ *   Copyright 2007-2011 by Apple Inc.
  *   Copyright 1997-2007 by Easy Software Products, all rights reserved.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -23,11 +23,7 @@
  * Include necessary headers...
  */
 
-#include "http-private.h"
-#include "globals.h"
-#include "debug.h"
-#include <stdlib.h>
-#include <errno.h>
+#include "cups-private.h"
 #ifdef HAVE_RESOLV_H
 #  include <resolv.h>
 #endif /* HAVE_RESOLV_H */
@@ -44,9 +40,12 @@ httpAddrConnect(
     http_addrlist_t *addrlist,		/* I - List of potential addresses */
     int             *sock)		/* O - Socket */
 {
-  int	val;				/* Socket option value */
+  int			val;		/* Socket option value */
+#ifdef __APPLE__
+  struct timeval	timeout;	/* Socket timeout value */
+#endif /* __APPLE__ */
 #ifdef DEBUG
-  char	temp[256];			/* Temporary address string */
+  char			temp[256];	/* Temporary address string */
 #endif /* DEBUG */
 
 
@@ -72,7 +71,7 @@ httpAddrConnect(
 		  httpAddrString(&(addrlist->addr), temp, sizeof(temp)),
 		  _httpAddrPort(&(addrlist->addr))));
 
-    if ((*sock = (int)socket(addrlist->addr.addr.sa_family, SOCK_STREAM,
+    if ((*sock = (int)socket(_httpAddrFamily(&(addrlist->addr)), SOCK_STREAM,
                              0)) < 0)
     {
      /*
@@ -106,6 +105,17 @@ httpAddrConnect(
     setsockopt(*sock, SOL_SOCKET, SO_NOSIGPIPE, &val, sizeof(val));
 #endif /* SO_NOSIGPIPE */
 
+#ifdef __APPLE__
+   /*
+    * Use a 30-second read timeout when connecting to limit the amount of time
+    * we block...
+    */
+
+    timeout.tv_sec  = 30;
+    timeout.tv_usec = 0;
+    setsockopt(*sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+#endif /* __APPLE__ */
+
    /*
     * Using TCP_NODELAY improves responsiveness, especially on systems
     * with a slow loopback interface...
@@ -114,9 +124,9 @@ httpAddrConnect(
     val = 1;
 #ifdef WIN32
     setsockopt(*sock, IPPROTO_TCP, TCP_NODELAY, (const char *)&val,
-               sizeof(val)); 
+               sizeof(val));
 #else
-    setsockopt(*sock, IPPROTO_TCP, TCP_NODELAY, &val, sizeof(val)); 
+    setsockopt(*sock, IPPROTO_TCP, TCP_NODELAY, &val, sizeof(val));
 #endif /* WIN32 */
 
 #ifdef FD_CLOEXEC
@@ -157,6 +167,9 @@ httpAddrConnect(
     *sock    = -1;
     addrlist = addrlist->next;
   }
+
+  if (!addrlist)
+    _cupsSetError(IPP_SERVICE_UNAVAILABLE, _("Unable to connect to server"), 1);
 
   return (addrlist);
 }
@@ -265,13 +278,13 @@ httpAddrGetList(const char *hostname,	/* I - Hostname, IP address, or NULL for p
   }
   else
 #endif /* AF_LOCAL */
-  if (!hostname || strcasecmp(hostname, "localhost"))
+  if (!hostname || _cups_strcasecmp(hostname, "localhost"))
   {
 #ifdef HAVE_GETADDRINFO
     struct addrinfo	hints,		/* Address lookup hints */
 			*results,	/* Address lookup results */
 			*current;	/* Current result */
-    char		ipv6[1024],	/* IPv6 address */
+    char		ipv6[64],	/* IPv6 address */
 			*ipv6zone;	/* Pointer to zone separator */
     int			ipv6len;	/* Length of IPv6 address */
     int			error;		/* getaddrinfo() error */
@@ -401,7 +414,7 @@ httpAddrGetList(const char *hostname,	/* I - Hostname, IP address, or NULL for p
         portnum = 80;
       else if (!strcmp(service, "https"))
         portnum = 443;
-      else if (!strcmp(service, "ipp"))
+      else if (!strcmp(service, "ipp") || !strcmp(service, "ipps"))
         portnum = 631;
       else if (!strcmp(service, "lpd"))
         portnum = 515;
@@ -502,7 +515,7 @@ httpAddrGetList(const char *hostname,	/* I - Hostname, IP address, or NULL for p
   * Detect some common errors and handle them sanely...
   */
 
-  if (!addr && (!hostname || !strcasecmp(hostname, "localhost")))
+  if (!addr && (!hostname || !_cups_strcasecmp(hostname, "localhost")))
   {
     struct servent	*port;		/* Port number for service */
     int			portnum;	/* Port number */
@@ -522,16 +535,19 @@ httpAddrGetList(const char *hostname,	/* I - Hostname, IP address, or NULL for p
       portnum = 80;
     else if (!strcmp(service, "https"))
       portnum = 443;
-    else if (!strcmp(service, "ipp"))
+    else if (!strcmp(service, "ipp") || !strcmp(service, "ipps"))
       portnum = 631;
     else if (!strcmp(service, "lpd"))
       portnum = 515;
     else if (!strcmp(service, "socket"))
       portnum = 9100;
     else
+    {
+      httpAddrFreeList(first);
       return (NULL);
+    }
 
-    if (hostname && !strcasecmp(hostname, "localhost"))
+    if (hostname && !_cups_strcasecmp(hostname, "localhost"))
     {
      /*
       * Unfortunately, some users ignore all of the warnings in the

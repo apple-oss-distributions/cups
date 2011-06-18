@@ -1,10 +1,9 @@
 dnl
-dnl "$Id: cups-defaults.m4 7959 2008-09-17 19:30:58Z mike $"
+dnl "$Id: cups-defaults.m4 9613 2011-03-18 02:49:14Z mike $"
 dnl
-dnl   Default cupsd configuration settings for the Common UNIX Printing System
-dnl   (CUPS).
+dnl   Default cupsd configuration settings for CUPS.
 dnl
-dnl   Copyright 2007-2009 by Apple Inc.
+dnl   Copyright 2007-2011 by Apple Inc.
 dnl   Copyright 2006-2007 by Easy Software Products, all rights reserved.
 dnl
 dnl   These coded instructions, statements, and computer programs are the
@@ -24,6 +23,21 @@ AC_ARG_WITH(languages, [  --with-languages        set installed languages, defau
 		*) LANGUAGES="$withval" ;;
 	esac])
 AC_SUBST(LANGUAGES)
+
+dnl Mac OS X bundle-based localization support
+AC_ARG_WITH(bundledir, [  --with-bundledir     set Mac OS X localization bundle directory ],
+	CUPS_BUNDLEDIR="$withval",
+	if test "x$uname" = xDarwin -a $uversion -ge 100; then
+		CUPS_BUNDLEDIR="/System/Library/Frameworks/ApplicationServices.framework/Versions/A/Frameworks/PrintCore.framework/Versions/A"
+		LANGUAGES=""
+	else
+		CUPS_BUNDLEDIR=""
+	fi)
+
+AC_SUBST(CUPS_BUNDLEDIR)
+if test "x$CUPS_BUNDLEDIR" != x; then
+	AC_DEFINE_UNQUOTED(CUPS_BUNDLEDIR, "$CUPS_BUNDLEDIR")
+fi
 
 dnl Default ConfigFilePerm
 AC_ARG_WITH(config_file_perm, [  --with-config-file-perm set default ConfigFilePerm value, default=0640],
@@ -208,6 +222,10 @@ AC_ARG_WITH(cups_user, [  --with-cups-user        set default user for CUPS],
 		AC_MSG_RESULT(no password file, using "$CUPS_USER")
 	fi)
 
+if test "x$CUPS_USER" = "xroot" -o "x$CUPS_USER" = "x0"; then
+	AC_MSG_ERROR([The default user for CUPS cannot be root!])
+fi
+
 AC_ARG_WITH(cups_group, [  --with-cups-group       set default group for CUPS],
 	CUPS_GROUP="$withval",
 	AC_MSG_CHECKING(for default print group)
@@ -237,6 +255,10 @@ AC_ARG_WITH(cups_group, [  --with-cups-group       set default group for CUPS],
 		CUPS_GROUP="nobody"
 		AC_MSG_RESULT(no group file, using "$CUPS_GROUP")
 	fi)
+
+if test "x$CUPS_GROUP" = "xroot" -o "x$CUPS_GROUP" = "xwheel" -o "x$CUPS_GROUP" = "x0"; then
+	AC_MSG_ERROR([The default group for CUPS cannot be root!])
+fi
 
 AC_ARG_WITH(system_groups, [  --with-system-groups    set default system groups for CUPS],
 	CUPS_SYSTEM_GROUPS="$withval",
@@ -269,8 +291,13 @@ AC_ARG_WITH(system_groups, [  --with-system-groups    set default system groups 
 		fi
 	fi)
 
-
 CUPS_PRIMARY_SYSTEM_GROUP="`echo $CUPS_SYSTEM_GROUPS | awk '{print $1}'`"
+
+for group in $CUPS_SYSTEM_GROUPS; do
+	if test "x$CUPS_GROUP" = "x$group"; then
+		AC_MSG_ERROR([The default system groups cannot contain the default CUPS group!])
+	fi
+done
 
 AC_SUBST(CUPS_USER)
 AC_SUBST(CUPS_GROUP)
@@ -325,8 +352,8 @@ if test x$default_lpdconfigfile != xno; then
 				CUPS_DEFAULT_LPD_CONFIG_FILE="launchd:///System/Library/LaunchDaemons/org.cups.cups-lpd.plist"
 				;;
 			*)
-				if test -d /etc/xinetd.d; then
-					CUPS_DEFAULT_LPD_CONFIG_FILE="xinetd:///etc/xinetd.d/cups-lpd"
+				if test "x$XINETD" != x; then
+					CUPS_DEFAULT_LPD_CONFIG_FILE="xinetd://$XINETD/cups-lpd"
 				else
 					CUPS_DEFAULT_LPD_CONFIG_FILE=""
 				fi
@@ -413,27 +440,71 @@ AC_ARG_ENABLE(texttops, [  --enable-texttops       always build the text filter 
 
 if test "x$enable_bannertops" = xno; then
 	BANNERTOPS=""
+	DEFAULT_BANNERTOPS="#"
 elif test "x$enable_bannertops" = xyes; then
 	BANNERTOPS="bannertops"
+	DEFAULT_BANNERTOPS=""
 elif test $uname = Darwin; then
 	BANNERTOPS=""
+	DEFAULT_BANNERTOPS="#"
 else
 	BANNERTOPS="bannertops"
+	DEFAULT_BANNERTOPS=""
 fi
 
 if test "x$enable_texttops" = xno; then
 	TEXTTOPS=""
+	DEFAULT_TEXTTOPS="#"
 elif test "x$enable_texttops" = xyes; then
 	TEXTTOPS="texttops"
+	DEFAULT_TEXTTOPS=""
 elif test $uname = Darwin; then
 	TEXTTOPS=""
+	DEFAULT_TEXTTOPS="#"
 else
 	TEXTTOPS="texttops"
+	DEFAULT_TEXTTOPS=""
 fi
 
 AC_SUBST(BANNERTOPS)
+AC_SUBST(DEFAULT_BANNERTOPS)
+AC_SUBST(DEFAULT_TEXTTOPS)
 AC_SUBST(TEXTTOPS)
 
+dnl Fonts
+if test "x$BANNERTOPS" = x -a "x$TEXTTOPS" = x; then
+	FONTS=""
+else
+	FONTS="fonts"
+fi
+
+AC_SUBST(FONTS)
+
+dnl Web interface...
+AC_ARG_ENABLE(webif, [  --enable-webif          enable the web interface by default, default=no for Mac OS X])
+case "x$enable_webif" in
+	xno)
+		CUPS_WEBIF=No
+		CUPS_DEFAULT_WEBIF=0
+		;;
+	xyes)
+		CUPS_WEBIF=Yes
+		CUPS_DEFAULT_WEBIF=1
+		;;
+	*)
+		if test $uname = Darwin; then
+			CUPS_WEBIF=No
+			CUPS_DEFAULT_WEBIF=0
+		else
+			CUPS_WEBIF=Yes
+			CUPS_DEFAULT_WEBIF=1
+		fi
+		;;
+esac
+
+AC_SUBST(CUPS_WEBIF)
+AC_DEFINE_UNQUOTED(CUPS_DEFAULT_WEBIF, $CUPS_DEFAULT_WEBIF)
+
 dnl
-dnl End of "$Id: cups-defaults.m4 7959 2008-09-17 19:30:58Z mike $".
+dnl End of "$Id: cups-defaults.m4 9613 2011-03-18 02:49:14Z mike $".
 dnl

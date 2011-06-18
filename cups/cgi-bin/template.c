@@ -3,7 +3,7 @@
  *
  *   CGI template function.
  *
- *   Copyright 2007-2008 by Apple Inc.
+ *   Copyright 2007-2011 by Apple Inc.
  *   Copyright 1997-2006 by Easy Software Products.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -119,7 +119,7 @@ cgiCopyTemplateLang(const char *tmpl)	/* I - Base filename */
       *locptr = '\0';			/* Strip charset */
   }
 
-  fprintf(stderr, "DEBUG: lang=\"%s\", locale=\"%s\"...\n",
+  fprintf(stderr, "DEBUG2: lang=\"%s\", locale=\"%s\"...\n",
           lang ? lang : "(null)", locale);
 
  /*
@@ -369,6 +369,20 @@ cgi_copy(FILE *out,			/* I - Output file */
 
         continue;
       }
+      else if (name[0] == '$')
+      {
+       /*
+        * Insert cookie value or nothing if not defined.
+	*/
+
+        if ((value = cgiGetCookie(name + 1)) != NULL)
+	  outptr = value;
+	else
+	{
+	  outval[0] = '\0';
+	  outptr    = outval;
+	}
+      }
       else
       {
        /*
@@ -409,7 +423,7 @@ cgi_copy(FILE *out,			/* I - Output file */
 	{
 	  if (uriencode)
 	    cgi_puturi(outptr, out);
-	  else if (!strcasecmp(name, "?cupsdconf_default"))
+	  else if (!_cups_strcasecmp(name, "?cupsdconf_default"))
 	    fputs(outptr, stdout);
 	  else
 	    cgi_puts(outptr, out);
@@ -437,7 +451,14 @@ cgi_copy(FILE *out,			/* I - Output file */
         * Test for existance...
 	*/
 
-        result     = cgiGetArray(name, element) != NULL && outptr[0];
+        if (name[0] == '?')
+	  result = cgiGetArray(name + 1, element) != NULL;
+	else if (name[0] == '#')
+	  result = cgiGetVariable(name + 1) != NULL;
+        else
+          result = cgiGetArray(name, element) != NULL;
+
+	result     = result && outptr[0];
 	compare[0] = '\0';
       }
       else
@@ -515,16 +536,16 @@ cgi_copy(FILE *out,			/* I - Output file */
         switch (op)
 	{
 	  case '<' :
-	      result = strcasecmp(outptr, compare) < 0;
+	      result = _cups_strcasecmp(outptr, compare) < 0;
 	      break;
 	  case '>' :
-	      result = strcasecmp(outptr, compare) > 0;
+	      result = _cups_strcasecmp(outptr, compare) > 0;
 	      break;
 	  case '=' :
-	      result = strcasecmp(outptr, compare) == 0;
+	      result = _cups_strcasecmp(outptr, compare) == 0;
 	      break;
 	  case '!' :
-	      result = strcasecmp(outptr, compare) != 0;
+	      result = _cups_strcasecmp(outptr, compare) != 0;
 	      break;
 	  case '~' :
 	      fprintf(stderr, "DEBUG: Regular expression \"%s\"\n", compare);
@@ -643,7 +664,7 @@ cgi_puts(const char *s,			/* I - String to output */
       * Pass <A HREF="url"> and </A>, otherwise quote it...
       */
 
-      if (!strncasecmp(s, "<A HREF=\"", 9))
+      if (!_cups_strncasecmp(s, "<A HREF=\"", 9))
       {
         fputs("<A HREF=\"", out);
 	s += 9;
@@ -663,7 +684,7 @@ cgi_puts(const char *s,			/* I - String to output */
 
 	fputs("\">", out);
       }
-      else if (!strncasecmp(s, "</A>", 4))
+      else if (!_cups_strncasecmp(s, "</A>", 4))
       {
         fputs("</A>", out);
 	s += 3;
@@ -675,6 +696,8 @@ cgi_puts(const char *s,			/* I - String to output */
       fputs("&gt;", out);
     else if (*s == '\"')
       fputs("&quot;", out);
+    else if (*s == '\'')
+      fputs("&#39;", out);
     else if (*s == '&')
       fputs("&amp;", out);
     else
@@ -695,7 +718,7 @@ cgi_puturi(const char *s,		/* I - String to output */
 {
   while (*s)
   {
-    if (strchr("%&+ <>#=", *s) || *s & 128)
+    if (strchr("%@&+ <>#=", *s) || *s < ' ' || *s & 128)
       fprintf(out, "%%%02X", *s & 255);
     else
       putc(*s, out);
