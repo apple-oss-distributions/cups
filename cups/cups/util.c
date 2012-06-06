@@ -3,7 +3,7 @@
  *
  *   Printing utilities for CUPS.
  *
- *   Copyright 2007-2011 by Apple Inc.
+ *   Copyright 2007-2012 by Apple Inc.
  *   Copyright 1997-2006 by Easy Software Products.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -106,7 +106,7 @@ cupsCancelJob(const char *name,		/* I - Name of printer or class */
  * Use the @link cupsLastError@ and @link cupsLastErrorString@ functions to get
  * the cause of any failure.
  *
- * @since CUPS 1.4/Mac OS X 10.6@
+ * @since CUPS 1.4/OS X 10.6@
  */
 
 ipp_status_t				/* O - IPP status */
@@ -194,7 +194,7 @@ cupsCancelJob2(http_t     *http,	/* I - Connection to server or @code CUPS_HTTP_
  * print, use the @link cupsPrintFile2@ or @link cupsPrintFiles2@ function
  * instead.
  *
- * @since CUPS 1.4/Mac OS X 10.6@
+ * @since CUPS 1.4/OS X 10.6@
  */
 
 int					/* O - Job ID or 0 on error */
@@ -248,7 +248,8 @@ cupsCreateJob(
   if (title)
     ippAddString(request, IPP_TAG_OPERATION, IPP_TAG_NAME, "job-name", NULL,
                  title);
-  cupsEncodeOptions(request, num_options, options);
+  cupsEncodeOptions2(request, num_options, options, IPP_TAG_JOB);
+  cupsEncodeOptions2(request, num_options, options, IPP_TAG_SUBSCRIPTION);
 
  /*
   * Send the request and get the job-id...
@@ -274,7 +275,7 @@ cupsCreateJob(
  *
  * The document must have been started using @link cupsStartDocument@.
  *
- * @since CUPS 1.4/Mac OS X 10.6@
+ * @since CUPS 1.4/OS X 10.6@
  */
 
 ipp_status_t				/* O - Status of document submission */
@@ -443,7 +444,7 @@ cupsGetDefault(void)
  * functions to get the user-defined default printer, as this function does
  * not support the lpoptions-defined default printer.
  *
- * @since CUPS 1.1.21/Mac OS X 10.4@
+ * @since CUPS 1.1.21/OS X 10.4@
  */
 
 const char *				/* O - Default printer or @code NULL@ */
@@ -534,7 +535,7 @@ cupsGetJobs(cups_job_t **jobs,		/* O - Job data */
  * pending, processing, or held and @code CUPS_WHICHJOBS_COMPLETED@ returns
  * jobs that are stopped, canceled, aborted, or completed.
  *
- * @since CUPS 1.1.21/Mac OS X 10.4@
+ * @since CUPS 1.1.21/OS X 10.4@
  */
 
 int					/* O - Number of jobs */
@@ -838,7 +839,7 @@ cupsGetPPD(const char *name)		/* I - Destination name */
  * each call to @link cupsGetPPD@ or @code cupsGetPPD2@.  The caller "owns" the
  * file that is created and must @code unlink@ the returned filename.
  *
- * @since CUPS 1.1.21/Mac OS X 10.4@
+ * @since CUPS 1.1.21/OS X 10.4@
  */
 
 const char *				/* O - Filename for PPD file */
@@ -879,7 +880,7 @@ cupsGetPPD2(http_t     *http,		/* I - Connection to server or @code CUPS_HTTP_DE
  * For classes, @code cupsGetPPD3@ returns the PPD file for the first printer
  * in the class.
  *
- * @since CUPS 1.4/Mac OS X 10.6@
+ * @since CUPS 1.4/OS X 10.6@
  */
 
 http_status_t				/* O  - HTTP status */
@@ -899,6 +900,7 @@ cupsGetPPD3(http_t     *http,		/* I  - HTTP connection or @code CUPS_HTTP_DEFAUL
 		resource[HTTP_MAX_URI];	/* Resource name */
   int		port;			/* Port number */
   http_status_t	status;			/* HTTP status from server */
+  char		tempfile[1024] = "";	/* Temporary filename */
   _cups_globals_t *cg = _cupsGlobals();	/* Pointer to library globals */
 
 
@@ -1090,7 +1092,7 @@ cupsGetPPD3(http_t     *http,		/* I  - HTTP connection or @code CUPS_HTTP_DEFAUL
   if (buffer[0])
     fd = open(buffer, O_CREAT | O_TRUNC | O_WRONLY, 0600);
   else
-    fd = cupsTempFd(buffer, bufsize);
+    fd = cupsTempFd(tempfile, sizeof(tempfile));
 
   if (fd < 0)
   {
@@ -1125,13 +1127,23 @@ cupsGetPPD3(http_t     *http,		/* I  - HTTP connection or @code CUPS_HTTP_DEFAUL
   */
 
   if (status == HTTP_OK)
+  {
     *modtime = httpGetDateTime(httpGetField(http2, HTTP_FIELD_DATE));
+
+    if (tempfile[0])
+      strlcpy(buffer, tempfile, bufsize);
+  }
   else if (status != HTTP_NOT_MODIFIED)
   {
     _cupsSetHTTPError(status);
 
-    unlink(cg->ppd_filename);
+    if (buffer[0])
+      unlink(buffer);
+    else if (tempfile[0])
+      unlink(tempfile);
   }
+  else if (tempfile[0])
+    unlink(tempfile);
 
   if (http2 != http)
     httpClose(http2);
@@ -1264,7 +1276,7 @@ cupsGetPrinters(char ***printers)	/* O - Printers */
  * overwritten on the next call to @link cupsGetPPD@, @link cupsGetPPD2@,
  * or @link cupsGetServerPPD@.
  *
- * @since CUPS 1.3/Mac OS X 10.5@
+ * @since CUPS 1.3/OS X 10.5@
  */
 
 char *					/* O - Name of PPD file or @code NULL@ on error */
@@ -1353,7 +1365,7 @@ cupsPrintFile(const char    *name,	/* I - Destination name */
  * 'cupsPrintFile2()' - Print a file to a printer or class on the specified
  *                      server.
  *
- * @since CUPS 1.1.21/Mac OS X 10.4@
+ * @since CUPS 1.1.21/OS X 10.4@
  */
 
 int					/* O - Job ID or 0 on error */
@@ -1405,7 +1417,7 @@ cupsPrintFiles(
  * 'cupsPrintFiles2()' - Print one or more files to a printer or class on the
  *                       specified server.
  *
- * @since CUPS 1.1.21/Mac OS X 10.4@
+ * @since CUPS 1.1.21/OS X 10.4@
  */
 
 int					/* O - Job ID or 0 on error */
@@ -1537,7 +1549,7 @@ cupsPrintFiles2(
  * @code CUPS_FORMAT_TEXT@ are provided for the "format" argument, although
  * any supported MIME type string can be supplied.
  *
- * @since CUPS 1.4/Mac OS X 10.6@
+ * @since CUPS 1.4/OS X 10.6@
  */
 
 http_status_t				/* O - HTTP status of request */
@@ -1562,7 +1574,7 @@ cupsStartDocument(
   if ((request = ippNewRequest(IPP_SEND_DOCUMENT)) == NULL)
   {
     _cupsSetError(IPP_INTERNAL_ERROR, strerror(ENOMEM), 0);
-    return (0);
+    return (HTTP_ERROR);
   }
 
   httpAssembleURIf(HTTP_URI_CODING_ALL, printer_uri, sizeof(printer_uri), "ipp",

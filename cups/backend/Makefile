@@ -3,7 +3,7 @@
 #
 #   Backend makefile for CUPS.
 #
-#   Copyright 2007-2011 by Apple Inc.
+#   Copyright 2007-2012 by Apple Inc.
 #   Copyright 1997-2007 by Easy Software Products, all rights reserved.
 #
 #   These coded instructions, statements, and computer programs are the
@@ -21,13 +21,43 @@ include ../Makedefs
 # Object files...
 #
 
-RBACKENDS =	ipp lpd $(DNSSD_BACKEND)
-UBACKENDS =	$(LEGACY_BACKENDS) serial snmp socket usb
-UNITTESTS =	test1284 testbackend testsupplies
-TARGETS =	libbackend.a $(RBACKENDS) $(UBACKENDS)
-LIBOBJS	=	ieee1284.o network.o runloop.o snmp-supplies.o
-OBJS	=	ipp.o lpd.o dnssd.o parallel.o serial.o snmp.o \
-		socket.o test1284.o testbackend.o testsupplies.o usb.o
+# RBACKENDS are installed mode 0700 so cupsd will run them as root...
+#
+# UBACKENDS are installed mode 0755 so cupsd will run them as an unprivileged
+# user...
+#
+# See http://www.cups.org/documentation.php/api-filter.html for more info...
+RBACKENDS =	\
+		ipp \
+		lpd \
+		$(DNSSD_BACKEND)
+UBACKENDS =	\
+		snmp \
+		socket \
+		usb
+UNITTESTS =	\
+		test1284 \
+		testbackend \
+		testsupplies
+TARGETS =	\
+		libbackend.a \
+		$(RBACKENDS) \
+		$(UBACKENDS)
+LIBOBJS	=	\
+		ieee1284.o \
+		network.o \
+		runloop.o \
+		snmp-supplies.o
+OBJS	=	\
+		ipp.o \
+		lpd.o \
+		dnssd.o \
+		snmp.o \
+		socket.o \
+		test1284.o \
+		testbackend.o \
+		testsupplies.o \
+		usb.o
 
 
 #
@@ -56,7 +86,7 @@ unittests:	$(UNITTESTS)
 #
 
 clean:
-	$(RM) $(OBJS) $(TARGETS) $(UNITTESTS) $(LIBOBJS) http mdns
+	$(RM) $(OBJS) $(TARGETS) $(UNITTESTS) $(LIBOBJS) http https ipps mdns
 
 
 #
@@ -64,7 +94,7 @@ clean:
 #
 
 depend:
-	makedepend -Y -I.. -fDependencies $(OBJS:.o=.c) >/dev/null 2>&1
+	$(CC) -MM $(ALL_CFLAGS) $(OBJS:.o=.c) >Dependencies
 
 
 #
@@ -182,6 +212,9 @@ testsupplies:	testsupplies.o libbackend.a ../cups/$(LIBCUPSSTATIC)
 	$(CC) $(LDFLAGS) -o testsupplies testsupplies.o libbackend.a \
 		../cups/$(LIBCUPSSTATIC) $(LIBGSSAPI) $(SSLLIBS) $(DNSSDLIBS) \
 		$(COMMONLIBS) $(LIBZ)
+	if test -x /usr/bin/dsymutil; then \
+		/usr/bin/dsymutil testsupplies; \
+	fi
 
 
 #
@@ -227,24 +260,6 @@ lpd:	lpd.o ../cups/$(LIBCUPS) libbackend.a
 
 
 #
-# parallel
-#
-
-parallel:	parallel.o ../cups/$(LIBCUPS) libbackend.a
-	echo Linking $@...
-	$(CC) $(LDFLAGS) -o parallel parallel.o libbackend.a $(LIBS)
-
-
-#
-# serial
-#
-
-serial:	serial.o ../cups/$(LIBCUPS) libbackend.a
-	echo Linking $@...
-	$(CC) $(LDFLAGS) -o serial serial.o libbackend.a $(BACKLIBS) $(LIBS)
-
-
-#
 # snmp
 #
 
@@ -268,7 +283,7 @@ socket:	socket.o ../cups/$(LIBCUPS) libbackend.a
 
 usb:	usb.o ../cups/$(LIBCUPS) libbackend.a
 	echo Linking $@...
-	$(CC) $(LDFLAGS) -o usb usb.o libbackend.a $(LIBUSB) \
+	$(CC) $(ARCHFLAGS) $(LDFLAGS) -o usb usb.o libbackend.a $(LIBUSB) \
 		$(BACKLIBS) $(LIBS)
 usb.o:	usb.c usb-darwin.c usb-libusb.c usb-unix.c
 

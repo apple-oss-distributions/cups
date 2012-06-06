@@ -28,13 +28,7 @@
  * Include necessary headers...
  */
 
-#include "image-private.h"
-#ifdef WIN32
-#  include <io.h>
-#else
-#  include <unistd.h>
-#  include <fcntl.h>
-#endif /* WIN32 */
+#include <cups/raster-private.h>
 
 
 /*
@@ -691,6 +685,12 @@ do_raster_tests(cups_mode_t mode)	/* O - Write mode */
     expected.cupsWidth        = 256;
     expected.cupsHeight       = 256;
     expected.cupsBytesPerLine = 256;
+
+    if (mode == CUPS_RASTER_WRITE_PWG)
+    {
+      strlcpy(expected.MediaClass, "PwgRaster", sizeof(expected.MediaClass));
+      expected.cupsInteger[7] = 0xffffff;
+    }
 
     if (page & 1)
     {

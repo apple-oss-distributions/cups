@@ -379,7 +379,23 @@ cupsdLogGSSMessage(
 		minor_status_string = GSS_C_EMPTY_BUFFER;
 					/* Minor status message */
   int		ret;			/* Return value */
+  char		buffer[8192];		/* Buffer for vsnprintf */
 
+
+  if (strchr(message, '%'))
+  {
+   /*
+    * Format the message string...
+    */
+
+    va_list	ap;			/* Pointer to arguments */
+
+    va_start(ap, message);
+    vsnprintf(buffer, sizeof(buffer), message, ap);
+    va_end(ap);
+
+    message = buffer;
+  }
 
   msg_ctx             = 0;
   err_major_status    = gss_display_status(&err_minor_status,
@@ -414,7 +430,7 @@ cupsdLogJob(cupsd_job_t *job,		/* I - Job */
 	    const char  *message,	/* I - Printf-style message string */
 	    ...)			/* I - Additional arguments as needed */
 {
-  va_list		ap;		/* Argument pointer */
+  va_list		ap, ap2;	/* Argument pointers */
   char			jobmsg[1024];	/* Format string for job message */
   int			status;		/* Formatting status */
 
@@ -435,19 +451,27 @@ cupsdLogJob(cupsd_job_t *job,		/* I - Job */
   * Format and write the log message...
   */
 
-  snprintf(jobmsg, sizeof(jobmsg), "[Job %d] %s", job->id, message);
+  if (job)
+    snprintf(jobmsg, sizeof(jobmsg), "[Job %d] %s", job->id, message);
+  else
+    strlcpy(jobmsg, message, sizeof(jobmsg));
+
+  va_start(ap, message);
 
   do
   {
-    va_start(ap, message);
-    status = format_log_line(jobmsg, ap);
-    va_end(ap);
+    va_copy(ap2, ap);
+    status = format_log_line(jobmsg, ap2);
+    va_end(ap2);
   }
   while (status == 0);
-  
+
+  va_end(ap);
+
   if (status > 0)
   {
-    if ((level > LogLevel ||
+    if (job &&
+        (level > LogLevel ||
          (level == CUPSD_LOG_INFO && LogLevel < CUPSD_LOG_DEBUG)) &&
 	LogDebugHistory > 0)
     {
@@ -508,7 +532,7 @@ cupsdLogMessage(int        level,	/* I - Log level */
                 const char *message,	/* I - printf-style message string */
 	        ...)			/* I - Additional args as needed */
 {
-  va_list		ap;		/* Argument pointer */
+  va_list		ap, ap2;	/* Argument pointers */
   int			status;		/* Formatting status */
 
 
@@ -516,15 +540,12 @@ cupsdLogMessage(int        level,	/* I - Log level */
   * See if we want to log this message...
   */
 
-  if (TestConfigFile)
+  if ((TestConfigFile || !ErrorLog) && level <= CUPSD_LOG_WARN)
   {
-    if (level <= CUPSD_LOG_WARN)
-    {
-      va_start(ap, message);
-      vfprintf(stderr, message, ap);
-      putc('\n', stderr);
-      va_end(ap);
-    }
+    va_start(ap, message);
+    vfprintf(stderr, message, ap);
+    putc('\n', stderr);
+    va_end(ap);
 
     return (1);
   }
@@ -536,13 +557,17 @@ cupsdLogMessage(int        level,	/* I - Log level */
   * Format and write the log message...
   */
 
+  va_start(ap, message);
+
   do
   {
-    va_start(ap, message);
-    status = format_log_line(message, ap);
-    va_end(ap);
+    va_copy(ap2, ap);
+    status = format_log_line(message, ap2);
+    va_end(ap2);
   }
   while (status == 0);
+
+  va_end(ap);
 
   if (status > 0)
     return (cupsdWriteErrorLog(level, log_line));
@@ -567,8 +592,8 @@ cupsdLogPage(cupsd_job_t *job,		/* I - Job being printed */
   const char		*format,	/* Pointer into PageLogFormat */
 			*nameend;	/* End of attribute name */
   ipp_attribute_t	*attr;		/* Current attribute */
-  int			number;		/* Page number */
-  char			copies[256];	/* Number of copies */
+  char			number[256];	/* Page number */
+  int			copies;		/* Number of copies */
 
 
  /*
@@ -578,9 +603,9 @@ cupsdLogPage(cupsd_job_t *job,		/* I - Job being printed */
   if (!PageLogFormat)
     return (1);
 
-  number = 1;
-  strcpy(copies, "1");
-  sscanf(page, "%d%255s", &number, copies);
+  strcpy(number, "1");
+  copies = 1;
+  sscanf(page, "%255s%d", number, &copies);
 
   for (format = PageLogFormat, bufptr = buffer; *format; format ++)
   {
@@ -619,12 +644,12 @@ cupsdLogPage(cupsd_job_t *job,		/* I - Job being printed */
 	    break;
 
         case 'P' :			/* Page number */
-	    snprintf(bufptr, sizeof(buffer) - (bufptr - buffer), "%d", number);
+	    strlcpy(bufptr, number, sizeof(buffer) - (bufptr - buffer));
 	    bufptr += strlen(bufptr);
 	    break;
 
         case 'C' :			/* Number of copies */
-	    strlcpy(bufptr, copies, sizeof(buffer) - (bufptr - buffer));
+	    snprintf(bufptr, sizeof(buffer) - (bufptr - buffer), "%d", copies);
 	    bufptr += strlen(bufptr);
 	    break;
 
@@ -713,7 +738,7 @@ cupsdLogPage(cupsd_job_t *job,		/* I - Job being printed */
   }
 
   *bufptr = '\0';
-      
+
 #ifdef HAVE_VSYSLOG
  /*
   * See if we are logging pages via syslog...
@@ -875,7 +900,7 @@ cupsdLogRequest(cupsd_client_t *con,	/* I - Request to log */
         CUPSD_ACCESSLOG_ACTIONS,/* CUPS-Authenticate-Job */
         CUPSD_ACCESSLOG_ALL	/* CUPS-Get-PPD */
       };
-      
+
 
       if ((op <= IPP_SCHEDULE_JOB_AFTER && standard_ops[op] > AccessLogLevel) ||
           (op >= CUPS_GET_DEFAULT && op <= CUPS_GET_PPD &&

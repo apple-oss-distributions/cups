@@ -3,7 +3,7 @@
  *
  *   Global variable access routines for CUPS.
  *
- *   Copyright 2007-2010 by Apple Inc.
+ *   Copyright 2007-2012 by Apple Inc.
  *   Copyright 1997-2007 by Easy Software Products, all rights reserved.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -20,6 +20,7 @@
  *   _cupsGlobals()       - Return a pointer to thread local storage
  *   _cupsGlobalUnlock()  - Unlock the global mutex.
  *   DllMain()            - Main entry for library.
+ *   cups_fix_path()      - Fix a file path to use forward slashes consistently.
  *   cups_globals_alloc() - Allocate and initialize global data.
  *   cups_globals_free()  - Free global data.
  *   cups_globals_init()  - Initialize environment variables.
@@ -43,16 +44,23 @@ static _cups_threadkey_t cups_globals_key = _CUPS_THREADKEY_INITIALIZER;
 static pthread_once_t	cups_globals_key_once = PTHREAD_ONCE_INIT;
 					/* One-time initialization object */
 #endif /* HAVE_PTHREAD_H */
+#if defined(HAVE_PTHREAD_H) || defined(WIN32)
 static _cups_mutex_t	cups_global_mutex = _CUPS_MUTEX_INITIALIZER;
 					/* Global critical section */
+#endif /* HAVE_PTHREAD_H || WIN32 */
 
 
 /*
  * Local functions...
  */
 
+#ifdef WIN32
+static void		cups_fix_path(char *path);
+#endif /* WIN32 */
 static _cups_globals_t	*cups_globals_alloc(void);
+#if defined(HAVE_PTHREAD_H) || defined(WIN32)
 static void		cups_globals_free(_cups_globals_t *g);
+#endif /* HAVE_PTHREAD_H || WIN32 */
 #ifdef HAVE_PTHREAD_H
 static void		cups_globals_init(void);
 #endif /* HAVE_PTHREAD_H */
@@ -187,9 +195,9 @@ cups_globals_alloc(void)
 #ifdef WIN32
   HKEY		key;			/* Registry key */
   DWORD		size;			/* Size of string */
-  static char	installdir[1024],	/* Install directory */
-		confdir[1024],		/* Server root directory */
-		localedir[1024];	/* Locale directory */
+  static char	installdir[1024] = "",	/* Install directory */
+		confdir[1024] = "",	/* Server root directory */
+		localedir[1024] = "";	/* Locale directory */
 #endif /* WIN32 */
 
 
@@ -213,26 +221,46 @@ cups_globals_alloc(void)
   */
 
 #ifdef WIN32
- /*
-  * Open the registry...
-  */
-
-  strcpy(installdir, "C:/Program Files/cups.org");
-
-  if (!RegOpenKeyEx(HKEY_LOCAL_MACHINE, "SOFTWARE\\cups.org", 0, KEY_READ,
-                    &key))
+  if (!installdir[0])
   {
    /*
-    * Grab the installation directory...
+    * Open the registry...
     */
 
-    size = sizeof(installdir);
-    RegQueryValueEx(key, "installdir", NULL, NULL, installdir, &size);
-    RegCloseKey(key);
-  }
+    strcpy(installdir, "C:/Program Files/cups.org");
 
-  snprintf(confdir, sizeof(confdir), "%s/conf", installdir);
-  snprintf(localedir, sizeof(localedir), "%s/locale", installdir);
+    if (!RegOpenKeyEx(HKEY_LOCAL_MACHINE, "SOFTWARE\\cups.org", 0, KEY_READ,
+                      &key))
+    {
+     /*
+      * Grab the installation directory...
+      */
+
+      char  *ptr;			/* Pointer into installdir */
+
+      size = sizeof(installdir);
+      RegQueryValueEx(key, "installdir", NULL, NULL, installdir, &size);
+      RegCloseKey(key);
+
+      for (ptr = installdir; *ptr;)
+      {
+        if (*ptr == '\\')
+        {
+          if (ptr[1])
+            *ptr++ = '/';
+          else
+            *ptr = '\0';		/* Strip trailing \ */
+        }
+        else if (*ptr == '/' && !ptr[1])
+          *ptr = '\0';			/* Strip trailing / */
+        else
+          ptr ++;
+      }
+    }
+
+    snprintf(confdir, sizeof(confdir), "%s/conf", installdir);
+    snprintf(localedir, sizeof(localedir), "%s/locale", installdir);
+  }
 
   if ((cg->cups_datadir = getenv("CUPS_DATADIR")) == NULL)
     cg->cups_datadir = installdir;
@@ -298,17 +326,18 @@ cups_globals_alloc(void)
  * 'cups_globals_free()' - Free global data.
  */
 
+#if defined(HAVE_PTHREAD_H) || defined(WIN32)
 static void
 cups_globals_free(_cups_globals_t *cg)	/* I - Pointer to global data */
 {
-  _ipp_buffer_t		*buffer,	/* Current IPP read/write buffer */
+  _cups_buffer_t	*buffer,	/* Current read/write buffer */
 			*next;		/* Next buffer */
 
 
   if (cg->last_status_message)
     _cupsStrFree(cg->last_status_message);
 
-  for (buffer = cg->ipp_buffers; buffer; buffer = next)
+  for (buffer = cg->cups_buffers; buffer; buffer = next)
   {
     next = buffer->next;
     free(buffer);
@@ -330,6 +359,7 @@ cups_globals_free(_cups_globals_t *cg)	/* I - Pointer to global data */
 
   free(cg);
 }
+#endif /* HAVE_PTHREAD_H || WIN32 */
 
 
 #ifdef HAVE_PTHREAD_H

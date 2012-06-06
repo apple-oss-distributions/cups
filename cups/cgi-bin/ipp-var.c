@@ -3,7 +3,7 @@
  *
  *   CGI <-> IPP variable routines for CUPS.
  *
- *   Copyright 2007-2011 by Apple Inc.
+ *   Copyright 2007-2012 by Apple Inc.
  *   Copyright 1997-2007 by Easy Software Products.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -792,7 +792,7 @@ cgiPrintTestPage(http_t     *http,	/* I - Connection to server */
   cgiStartHTML(cgiText(_("Print Test Page")));
 
   if (cupsLastError() > IPP_OK_CONFLICT)
-    cgiShowIPPError(_("Unable to print test page:"));
+    cgiShowIPPError(_("Unable to print test page"));
   else
   {
     cgiSetVariable("PRINTER_NAME", dest);
@@ -1219,7 +1219,7 @@ cgiSetIPPObjectVars(
 	             "%dx%d%s", attr->values[i].resolution.xres,
 		     attr->values[i].resolution.yres,
 		     attr->values[i].resolution.units == IPP_RES_PER_INCH ?
-			 "dpi" : "dpc");
+			 "dpi" : "dpcm");
 	    break;
 
 	case IPP_TAG_URI :

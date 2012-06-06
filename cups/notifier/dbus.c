@@ -1,10 +1,10 @@
 /*
- * "$Id: dbus.c 3049 2011-03-14 19:16:09Z msweet $"
+ * "$Id: dbus.c 3650 2012-02-13 18:13:46Z msweet $"
  *
  *   D-Bus notifier for CUPS.
  *
- *   Copyright 2008-2010 by Apple Inc.
- *   Copyright (C) 2007 Red Hat, Inc.
+ *   Copyright 2008-2011 by Apple Inc.
+ *   Copyright (C) 2011 Red Hat, Inc.
  *   Copyright (C) 2007 Tim Waugh <twaugh@redhat.com>
  *   Copyright 1997-2005 by Easy Software Products.
  *
@@ -32,13 +32,14 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include <dbus/dbus.h>
-#ifdef HAVE_DBUS_MESSAGE_ITER_INIT_APPEND
-#  define dbus_message_append_iter_init dbus_message_iter_init_append
-#  define dbus_message_iter_append_string(i,v) dbus_message_iter_append_basic(i, DBUS_TYPE_STRING, v)
-#  define dbus_message_iter_append_uint32(i,v) dbus_message_iter_append_basic(i, DBUS_TYPE_UINT32, v)
-#  define dbus_message_iter_append_boolean(i,v) dbus_message_iter_append_basic(i, DBUS_TYPE_BOOLEAN, v)
-#endif /* HAVE_DBUS_MESSAGE_ITER_INIT_APPEND */
+#ifdef HAVE_DBUS
+#  include <dbus/dbus.h>
+#  ifdef HAVE_DBUS_MESSAGE_ITER_INIT_APPEND
+#    define dbus_message_append_iter_init dbus_message_iter_init_append
+#    define dbus_message_iter_append_string(i,v) dbus_message_iter_append_basic(i, DBUS_TYPE_STRING, v)
+#    define dbus_message_iter_append_uint32(i,v) dbus_message_iter_append_basic(i, DBUS_TYPE_UINT32, v)
+#    define dbus_message_iter_append_boolean(i,v) dbus_message_iter_append_basic(i, DBUS_TYPE_BOOLEAN, v)
+#  endif /* HAVE_DBUS_MESSAGE_ITER_INIT_APPEND */
 
 
 /*
@@ -220,6 +221,8 @@ main(int  argc,				/* I - Number of command-line args */
     const char		*signame = NULL;/* DBUS signal name */
     char		*printer_reasons = NULL;
 					/* Printer reasons string */
+    char		*job_reasons = NULL;
+					/* Job reasons string */
     const char		*nul = "";	/* Empty string value */
     int			no = 0;		/* Boolean "no" value */
     int			params = PARAMS_NONE;
@@ -281,11 +284,11 @@ main(int  argc,				/* I - Number of command-line args */
       continue;
 
     attr = ippFindAttribute(msg, "notify-subscribed-event",
-			     IPP_TAG_KEYWORD);
+			    IPP_TAG_KEYWORD);
     if (!attr)
       continue;
 
-    event = attr->values[0].string.text;
+    event = ippGetString(attr, 0, NULL);
     if (!strncmp(event, "server-", 7))
     {
       const char *word2 = event + 7;	/* Second word */
@@ -353,7 +356,7 @@ main(int  argc,				/* I - Number of command-line args */
     /*
      * Create and send the new message...
      */
-    
+
     fprintf(stderr, "DEBUG: %s\n", signame);
     message = dbus_message_new_signal("/org/cups/cupsd/Notifier",
 				      "org.cups.cupsd.Notifier",
@@ -361,9 +364,14 @@ main(int  argc,				/* I - Number of command-line args */
 
     dbus_message_append_iter_init(message, &iter);
     attr = ippFindAttribute(msg, "notify-text", IPP_TAG_TEXT);
-    if (!attr)
+    if (attr)
+    {
+      const char *val = ippGetString(attr, 0, NULL);
+      if (!dbus_message_iter_append_string(&iter, &val))
+        goto bail;
+    }
+    else
       goto bail;
-    dbus_message_iter_append_string(&iter, &(attr->values[0].string.text));
 
     if (params >= PARAMS_PRINTER)
     {
@@ -375,7 +383,11 @@ main(int  argc,				/* I - Number of command-line args */
       /* STRING printer-uri or "" */
       attr = ippFindAttribute(msg, "notify-printer-uri", IPP_TAG_URI);
       if (attr)
-	dbus_message_iter_append_string(&iter, &(attr->values[0].string.text));
+      {
+        const char *val = ippGetString(attr, 0, NULL);
+        if (!dbus_message_iter_append_string(&iter, &val))
+	  goto bail;
+      }
       else
       {
 	have_printer_params = 0;
@@ -386,11 +398,14 @@ main(int  argc,				/* I - Number of command-line args */
       if (have_printer_params)
       {
 	attr = ippFindAttribute(msg, "printer-name", IPP_TAG_NAME);
-	if (attr)
-	  dbus_message_iter_append_string(&iter,
-					  &(attr->values[0].string.text));
-	else
-	  goto bail;
+        if (attr)
+        {
+          const char *val = ippGetString(attr, 0, NULL);
+          if (!dbus_message_iter_append_string(&iter, &val))
+            goto bail;
+        }
+        else
+          goto bail;
       }
       else
 	dbus_message_iter_append_string(&iter, &nul);
@@ -400,7 +415,10 @@ main(int  argc,				/* I - Number of command-line args */
       {
 	attr = ippFindAttribute(msg, "printer-state", IPP_TAG_ENUM);
 	if (attr)
-	  dbus_message_iter_append_uint32(&iter, &(attr->values[0].integer));
+	{
+	  dbus_uint32_t val = ippGetInteger(attr, 0);
+	  dbus_message_iter_append_uint32(&iter, &val);
+	}
 	else
 	  goto bail;
       }
@@ -414,21 +432,24 @@ main(int  argc,				/* I - Number of command-line args */
 				IPP_TAG_KEYWORD);
 	if (attr)
 	{
-	  for (reasons_length = 0, i = 0; i < attr->num_values; i++)
+	  int num_values = ippGetCount(attr);
+	  for (reasons_length = 0, i = 0; i < num_values; i++)
 	    /* All need commas except the last, which needs a nul byte. */
-	    reasons_length += 1 + strlen(attr->values[i].string.text);
+	    reasons_length += 1 + strlen(ippGetString(attr, i, NULL));
 	  printer_reasons = malloc(reasons_length);
 	  if (!printer_reasons)
 	    goto bail;
 	  p = printer_reasons;
-	  for (i = 0; i < attr->num_values; i++)
+	  for (i = 0; i < num_values; i++)
 	  {
-	    strcpy(p, attr->values[i].string.text);
-	    p += strlen(p);
 	    if (i)
 	      *p++ = ',';
+
+	    strcpy(p, ippGetString(attr, i, NULL));
+	    p += strlen(p);
 	  }
-	  dbus_message_iter_append_string(&iter, &printer_reasons);
+	  if (!dbus_message_iter_append_string(&iter, &printer_reasons))
+	    goto bail;
 	}
 	else
 	  goto bail;
@@ -442,7 +463,10 @@ main(int  argc,				/* I - Number of command-line args */
 	attr = ippFindAttribute(msg, "printer-is-accepting-jobs",
 				IPP_TAG_BOOLEAN);
 	if (attr)
-	  dbus_message_iter_append_boolean(&iter, &(attr->values[0].boolean));
+	{
+	  dbus_bool_t val = ippGetBoolean(attr, 0);
+	  dbus_message_iter_append_boolean(&iter, &val);
+	}
 	else
 	  goto bail;
       }
@@ -452,37 +476,77 @@ main(int  argc,				/* I - Number of command-line args */
 
     if (params >= PARAMS_JOB)
     {
+      char	*p;			/* Pointer into job_reasons */
+      size_t	reasons_length;		/* Required size of job_reasons */
+      int	i;			/* Looping var */
+
       /* UINT32 job-id */
       attr = ippFindAttribute(msg, "notify-job-id", IPP_TAG_INTEGER);
-      if (!attr)
+      if (attr)
+      {
+        dbus_uint32_t val = ippGetInteger(attr, 0);
+        dbus_message_iter_append_uint32(&iter, &val);
+      }
+      else
 	goto bail;
-      dbus_message_iter_append_uint32(&iter, &(attr->values[0].integer));
 
       /* UINT32 job-state */
       attr = ippFindAttribute(msg, "job-state", IPP_TAG_ENUM);
-      if (!attr)
+      if (attr)
+      {
+        dbus_uint32_t val = ippGetInteger(attr, 0);
+        dbus_message_iter_append_uint32(&iter, &val);
+      }
+      else
 	goto bail;
-      dbus_message_iter_append_uint32(&iter, &(attr->values[0].integer));
 
       /* STRING job-state-reasons */
       attr = ippFindAttribute(msg, "job-state-reasons", IPP_TAG_KEYWORD);
-      if (!attr)
+      if (attr)
+      {
+	int num_values = ippGetCount(attr);
+	for (reasons_length = 0, i = 0; i < num_values; i++)
+	  /* All need commas except the last, which needs a nul byte. */
+	  reasons_length += 1 + strlen(ippGetString(attr, i, NULL));
+	job_reasons = malloc(reasons_length);
+	if (!job_reasons)
+	  goto bail;
+	p = job_reasons;
+	for (i = 0; i < num_values; i++)
+	{
+	  if (i)
+	    *p++ = ',';
+
+	  strcpy(p, ippGetString(attr, i, NULL));
+	  p += strlen(p);
+	}
+	if (!dbus_message_iter_append_string(&iter, &job_reasons))
+	  goto bail;
+      }
+      else
 	goto bail;
-      dbus_message_iter_append_string(&iter, &(attr->values[0].string.text));
 
       /* STRING job-name or "" */
       attr = ippFindAttribute(msg, "job-name", IPP_TAG_NAME);
       if (attr)
-	dbus_message_iter_append_string(&iter, &(attr->values[0].string.text));
+      {
+        const char *val = ippGetString(attr, 0, NULL);
+        if (!dbus_message_iter_append_string(&iter, &val))
+          goto bail;
+      }
       else
 	dbus_message_iter_append_string(&iter, &nul);
 
       /* UINT32 job-impressions-completed */
       attr = ippFindAttribute(msg, "job-impressions-completed",
 			      IPP_TAG_INTEGER);
-      if (!attr)
+      if (attr)
+      {
+        dbus_uint32_t val = ippGetInteger(attr, 0);
+        dbus_message_iter_append_uint32(&iter, &val);
+      }
+      else
 	goto bail;
-      dbus_message_iter_append_uint32(&iter, &(attr->values[0].integer));
     }
 
     dbus_connection_send(con, message, NULL);
@@ -494,10 +558,14 @@ main(int  argc,				/* I - Number of command-line args */
 
     bail:
 
+    dbus_message_unref(message);
+
     if (printer_reasons)
       free(printer_reasons);
 
-    dbus_message_unref(message);
+    if (job_reasons)
+      free(job_reasons);
+
     ippDelete(msg);
   }
 
@@ -545,8 +613,15 @@ acquire_lock(int    *fd,		/* O - Lock file descriptor */
   else
     return (0);
 }
+#else /* !HAVE_DBUS */
+int
+main(void)
+{
+  return (1);
+}
+#endif /* HAVE_DBUS */
 
 
 /*
- * End of "$Id: dbus.c 3049 2011-03-14 19:16:09Z msweet $".
+ * End of "$Id: dbus.c 3650 2012-02-13 18:13:46Z msweet $".
  */

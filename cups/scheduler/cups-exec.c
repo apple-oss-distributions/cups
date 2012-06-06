@@ -1,9 +1,9 @@
 /*
- * "$Id: cups-exec.c 3147 2011-04-15 05:55:59Z msweet $"
+ * "$Id: cups-exec.c 3796 2012-04-23 22:54:48Z msweet $"
  *
  *   Sandbox helper for CUPS.
  *
- *   Copyright 2007-2011 by Apple Inc.
+ *   Copyright 2007-2012 by Apple Inc.
  *
  *   These coded instructions, statements, and computer programs are the
  *   property of Apple Inc. and are protected by Federal copyright
@@ -27,8 +27,10 @@
 #include <cups/string-private.h>
 #include <unistd.h>
 #ifdef HAVE_SANDBOX_H
-#  define __APPLE_API_PRIVATE
 #  include <sandbox.h>
+#  ifndef SANDBOX_NAMED_EXTERNAL
+#    define SANDBOX_NAMED_EXTERNAL  0x0003
+#  endif /* !SANDBOX_NAMED_EXTERNAL */
 #endif /* HAVE_SANDBOX_H */
 
 
@@ -102,5 +104,5 @@ main(int  argc,				/* I - Number of command-line args */
 
 
 /*
- * End of "$Id: cups-exec.c 3147 2011-04-15 05:55:59Z msweet $".
+ * End of "$Id: cups-exec.c 3796 2012-04-23 22:54:48Z msweet $".
  */

@@ -3,7 +3,7 @@
  *
  *   Authentication functions for CUPS.
  *
- *   Copyright 2007-2011 by Apple Inc.
+ *   Copyright 2007-2012 by Apple Inc.
  *   Copyright 1997-2007 by Easy Software Products.
  *
  *   This file contains Kerberos support code, copyright 2006 by
@@ -65,6 +65,8 @@ extern const char *cssmErrorString(int error);
 #    ifdef HAVE_GSS_GSSAPI_SPI_H
 #      include <GSS/gssapi_spi.h>
 #    else
+#      define GSS_AUTH_IDENTITY_TYPE_1 1
+#      define gss_acquire_cred_ex_f __ApplePrivate_gss_acquire_cred_ex_f
 typedef struct gss_auth_identity
 {
   uint32_t type;
@@ -113,7 +115,7 @@ static int	cups_local_auth(http_t *http);
  * This function should be called in response to a @code HTTP_UNAUTHORIZED@
  * status, prior to resubmitting your request.
  *
- * @since CUPS 1.1.20/Mac OS X 10.4@
+ * @since CUPS 1.1.20/OS X 10.4@
  */
 
 int					/* O - 0 on success, -1 on error */
@@ -122,7 +124,8 @@ cupsDoAuthentication(
     const char *method,			/* I - Request method ("GET", "POST", "PUT") */
     const char *resource)		/* I - Resource path */
 {
-  const char	*password;		/* Password string */
+  const char	*password,		/* Password string */
+		*www_auth;		/* WWW-Authenticate header */
   char		prompt[1024],		/* Prompt for user */
 		realm[HTTP_MAX_VALUE],	/* realm="xyz" string */
 		nonce[HTTP_MAX_VALUE];	/* nonce="xyz" string */
@@ -177,9 +180,11 @@ cupsDoAuthentication(
   * Nope, see if we should retry the current username:password...
   */
 
+  www_auth = http->fields[HTTP_FIELD_WWW_AUTHENTICATE];
+
   if ((http->digest_tries > 1 || !http->userpass[0]) &&
-      (!strncmp(http->fields[HTTP_FIELD_WWW_AUTHENTICATE], "Basic", 5) ||
-       !strncmp(http->fields[HTTP_FIELD_WWW_AUTHENTICATE], "Digest", 6)))
+      (!_cups_strncasecmp(www_auth, "Basic", 5) ||
+       !_cups_strncasecmp(www_auth, "Digest", 6)))
   {
    /*
     * Nope - get a new password from the user...
@@ -195,8 +200,7 @@ cupsDoAuthentication(
 	     cupsUser(),
 	     http->hostname[0] == '/' ? "localhost" : http->hostname);
 
-    http->digest_tries  = _cups_strncasecmp(http->fields[HTTP_FIELD_WWW_AUTHENTICATE],
-                                      "Digest", 5) != 0;
+    http->digest_tries  = _cups_strncasecmp(www_auth, "Digest", 6) != 0;
     http->userpass[0]   = '\0';
 
     if ((password = cupsGetPassword2(prompt, http, method, resource)) == NULL)
@@ -225,7 +229,7 @@ cupsDoAuthentication(
   */
 
 #ifdef HAVE_GSSAPI
-  if (!strncmp(http->fields[HTTP_FIELD_WWW_AUTHENTICATE], "Negotiate", 9))
+  if (!_cups_strncasecmp(www_auth, "Negotiate", 9))
   {
    /*
     * Kerberos authentication...
@@ -239,7 +243,7 @@ cupsDoAuthentication(
   }
   else
 #endif /* HAVE_GSSAPI */
-  if (!strncmp(http->fields[HTTP_FIELD_WWW_AUTHENTICATE], "Basic", 5))
+  if (!_cups_strncasecmp(www_auth, "Basic", 5))
   {
    /*
     * Basic authentication...
@@ -252,7 +256,7 @@ cupsDoAuthentication(
                    (int)strlen(http->userpass));
     httpSetAuthString(http, "Basic", encode);
   }
-  else if (!strncmp(http->fields[HTTP_FIELD_WWW_AUTHENTICATE], "Digest", 6))
+  else if (!_cups_strncasecmp(www_auth, "Digest", 6))
   {
    /*
     * Digest authentication...
@@ -275,7 +279,7 @@ cupsDoAuthentication(
   else
   {
     DEBUG_printf(("1cupsDoAuthentication: Unknown auth type: \"%s\"",
-                  http->fields[HTTP_FIELD_WWW_AUTHENTICATE]));
+                  www_auth));
     http->status = HTTP_AUTHORIZATION_CANCELED;
     return (-1);
   }
@@ -419,7 +423,6 @@ _cupsSetNegotiateAuthString(
       }
     }
   }
-  else
 #endif /* HAVE_GSS_ACQUIRED_CRED_EX_F */
 
   if (GSS_ERROR(major_status))

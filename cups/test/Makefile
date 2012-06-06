@@ -3,7 +3,7 @@
 #
 #   IPP test makefile for CUPS.
 #
-#   Copyright 2007-2010 by Apple Inc.
+#   Copyright 2007-2012 by Apple Inc.
 #   Copyright 1997-2006 by Easy Software Products, all rights reserved.
 #
 #   These coded instructions, statements, and computer programs are the
@@ -20,20 +20,35 @@ include ../Makedefs
 # Sample test files.
 #
 
+DATAFILES	=	\
+			color.jpg \
+			document-a4.pdf \
+			document-a4.ps \
+			document-letter.pdf \
+			document-letter.ps \
+			gray.jpg \
+			onepage-a4.pdf \
+			onepage-a4.ps \
+			onepage-letter.pdf \
+			onepage-letter.ps \
+			testfile.jpg \
+			testfile.pcl \
+			testfile.pdf \
+			testfile.ps \
+			testfile.txt
 TESTFILES	=	\
 			create-printer-subscription.test \
 			get-completed-jobs.test \
 			get-jobs.test \
+			get-printer-attributes.test \
 			ipp-1.1.test \
 			ipp-2.0.test \
 			ipp-2.1.test \
-			testfile.jpg \
-			testfile.pdf \
-			testfile.ps \
-			testfile.txt
+			ipp-2.2.test
 OBJS		=	\
 			ippserver.o \
-			ipptool.o
+			ipptool.o \
+			xmltotest.o
 TARGETS		=	\
 			ippserver \
 			ipptool \
@@ -74,7 +89,7 @@ clean:
 #
 
 depend:
-	makedepend -Y -I.. -fDependencies $(OBJS:.o=.c) >/dev/null 2>&1
+	$(CC) -MM $(ALL_CFLAGS) $(OBJS:.o=.c) >Dependencies
 
 
 #
@@ -91,6 +106,9 @@ install:	all install-data install-headers install-libs install-exec
 install-data:
 	echo Installing sample ipptool files in $(DATADIR)/ipptool...
 	$(INSTALL_DIR) -m 755 $(DATADIR)/ipptool
+	for file in $(DATAFILES); do \
+		$(INSTALL_COMPDATA) $$file $(DATADIR)/ipptool; \
+	done
 	for file in $(TESTFILES); do \
 		$(INSTALL_DATA) $$file $(DATADIR)/ipptool; \
 	done
@@ -129,6 +147,14 @@ install-libs:
 #
 
 uninstall:
+	echo Uninstalling sample ipptool files from $(DATADIR)/ipptool...
+	for file in $(DATAFILES); do \
+		$(RM) $(DATADIR)/ipptool/$$file; \
+	done
+	for file in $(TESTFILES); do \
+		$(RM) $(DATADIR)/ipptool/$$file; \
+	done
+	-$(RMDIR) $(DATADIR)/ipptool
 
 
 #
@@ -167,6 +193,17 @@ ipptool-static:	ipptool.o ../cups/$(LIBCUPSSTATIC)
 	echo Linking $@...
 	$(CC) $(LDFLAGS) -o $@ ipptool.o  ../cups/$(LIBCUPSSTATIC) \
 		$(LIBGSSAPI) $(SSLLIBS) $(DNSSDLIBS) $(COMMONLIBS) $(LIBZ)
+
+
+#
+# xmltotest
+#
+
+xmltotest: xmltotest.o ../cups/$(LIBUPSSTATIC)
+	echo Linking $@...
+	$(CC) $(LDFLAGS) -o $@ xmltotest.o  ../cups/$(LIBCUPSSTATIC) \
+		$(LIBGSSAPI) $(SSLLIBS) $(DNSSDLIBS) $(COMMONLIBS) $(LIBZ) \
+		$(LIBMXML)
 
 
 #

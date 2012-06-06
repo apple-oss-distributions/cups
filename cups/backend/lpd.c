@@ -3,7 +3,7 @@
  *
  *   Line Printer Daemon backend for CUPS.
  *
- *   Copyright 2007-2011 by Apple Inc.
+ *   Copyright 2007-2012 by Apple Inc.
  *   Copyright 1997-2007 by Easy Software Products, all rights reserved.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -19,7 +19,6 @@
  *   main()            - Send a file to the printer or server.
  *   lpd_command()     - Send an LPR command sequence and wait for a reply.
  *   lpd_queue()       - Queue a file using the Line Printer Daemon protocol.
- *   lpd_timeout()     - Handle timeout alarms...
  *   lpd_write()       - Write a buffer of data to an LPD server.
  *   rresvport_af()    - A simple implementation of rresvport_af().
  *   sigterm_handler() - Handle 'terminate' signals that stop the backend.
@@ -87,14 +86,13 @@ static int	abort_job = 0;		/* Non-zero if we get SIGTERM */
  * Local functions...
  */
 
-static int	lpd_command(int lpd_fd, int timeout, char *format, ...);
+static int	lpd_command(int lpd_fd, char *format, ...);
 static int	lpd_queue(const char *hostname, http_addrlist_t *addrlist,
 			  const char *printer, int print_fd, int snmp_fd,
 			  int mode, const char *user, const char *title,
 			  int copies, int banner, int format, int order,
 			  int reserve, int manual_copies, int timeout,
-			  int contimeout);
-static void	lpd_timeout(int sig);
+			  int contimeout, const char *orighost);
 static int	lpd_write(int lpd_fd, char *buffer, int length);
 #ifndef HAVE_RRESVPORT_AF
 static int	rresvport_af(int *port, int family);
@@ -146,6 +144,8 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
 #if defined(HAVE_SIGACTION) && !defined(HAVE_SIGSET)
   struct sigaction action;		/* Actions for POSIX signals */
 #endif /* HAVE_SIGACTION && !HAVE_SIGSET */
+  int		num_jobopts;		/* Number of job options */
+  cups_option_t	*jobopts = NULL;	/* Job options */
 
 
  /*
@@ -192,6 +192,8 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
                     argv[0]);
     return (CUPS_BACKEND_FAILED);
   }
+
+  num_jobopts = cupsParseOptions(argv[5], 0, &jobopts);
 
  /*
   * Extract the hostname and printer name from the URI...
@@ -527,7 +529,9 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
 
     status = lpd_queue(hostname, addrlist, resource + 1, fd, snmp_fd, mode,
                        username, title, copies, banner, format, order, reserve,
-		       manual_copies, timeout, contimeout);
+		       manual_copies, timeout, contimeout,
+		       cupsGetOption("job-originating-host-name", num_jobopts,
+		                     jobopts));
 
     if (!status)
       fprintf(stderr, "PAGE: 1 %d\n", atoi(argv[4]));
@@ -535,7 +539,9 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
   else
     status = lpd_queue(hostname, addrlist, resource + 1, fd, snmp_fd, mode,
                        username, title, 1, banner, format, order, reserve, 1,
-		       timeout, contimeout);
+		       timeout, contimeout,
+		       cupsGetOption("job-originating-host-name", num_jobopts,
+		                     jobopts));
 
  /*
   * Remove the temporary file if necessary...
@@ -564,7 +570,6 @@ main(int  argc,				/* I - Number of command-line arguments (6 or 7) */
 
 static int			/* O - Status of command */
 lpd_command(int  fd,		/* I - Socket connection to LPD host */
-            int  timeout,	/* I - Seconds to wait for a response */
             char *format,	/* I - printf()-style format string */
             ...)		/* I - Additional args as necessary */
 {
@@ -609,17 +614,11 @@ lpd_command(int  fd,		/* I - Socket connection to LPD host */
 
   fputs("DEBUG: Reading command status...\n", stderr);
 
-  alarm(timeout);
-
   if (recv(fd, &status, 1, 0) < 1)
   {
-    _cupsLangPrintFilter(stderr, "WARNING",
-		         _("Printer did not respond after %d seconds."),
-			 timeout);
+    _cupsLangPrintFilter(stderr, "WARNING", _("The printer did not respond."));
     status = errno;
   }
-
-  alarm(0);
 
   fprintf(stderr, "DEBUG: lpd_command returning %d\n", status);
 
@@ -647,7 +646,8 @@ lpd_queue(const char      *hostname,	/* I - Host to connect to */
 	  int             reserve,	/* I - Reserve ports? */
 	  int             manual_copies,/* I - Do copies by hand... */
 	  int             timeout,	/* I - Timeout... */
-	  int             contimeout)	/* I - Connection timeout */
+	  int             contimeout,	/* I - Connection timeout */
+	  const char      *orighost)	/* I - job-originating-host-name */
 {
   char			localhost[255];	/* Local host name */
   int			error;		/* Error number */
@@ -666,26 +666,12 @@ lpd_queue(const char      *hostname,	/* I - Host to connect to */
   size_t		nbytes;		/* Number of bytes written */
   off_t			tbytes;		/* Total bytes written */
   char			buffer[32768];	/* Output buffer */
-#if defined(HAVE_SIGACTION) && !defined(HAVE_SIGSET)
-  struct sigaction	action;		/* Actions for POSIX signals */
-#endif /* HAVE_SIGACTION && !HAVE_SIGSET */
-
-
- /*
-  * Setup an alarm handler for timeouts...
-  */
-
-#ifdef HAVE_SIGSET /* Use System V signals over POSIX to avoid bugs */
-  sigset(SIGALRM, lpd_timeout);
-#elif defined(HAVE_SIGACTION)
-  memset(&action, 0, sizeof(action));
-
-  sigemptyset(&action.sa_mask);
-  action.sa_handler = lpd_timeout;
-  sigaction(SIGALRM, &action, NULL);
+#ifdef WIN32
+  DWORD			tv;		/* Timeout in milliseconds */
 #else
-  signal(SIGALRM, lpd_timeout);
-#endif /* HAVE_SIGSET */
+  struct timeval	tv;		/* Timeout in secs and usecs */
+#endif /* WIN32 */
+
 
  /*
   * Remember when we started trying to connect to the printer...
@@ -839,7 +825,7 @@ lpd_queue(const char      *hostname,	/* I - Host to connect to */
 	  case ECONNREFUSED :
 	  default :
 	      _cupsLangPrintFilter(stderr, "WARNING",
-	                           _("The printer is busy."));
+	                           _("The printer is in use."));
 	      break;
         }
 
@@ -863,6 +849,23 @@ lpd_queue(const char      *hostname,	/* I - Host to connect to */
 	sleep(30);
       }
     }
+
+   /*
+    * Set the timeout...
+    */
+
+#ifdef WIN32
+    tv = (DWORD)(timeout * 1000);
+
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, sizeof(tv));
+#else
+    tv.tv_sec  = timeout;
+    tv.tv_usec = 0;
+
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+#endif /* WIN32 */
 
     fputs("STATE: -connecting-to-device\n", stderr);
     _cupsLangPrintFilter(stderr, "INFO", _("Connected to printer."));
@@ -926,14 +929,17 @@ lpd_queue(const char      *hostname,	/* I - Host to connect to */
     * literal output...
     */
 
-    if (lpd_command(fd, timeout, "\002%s\n",
+    if (lpd_command(fd, "\002%s\n",
                     printer))		/* Receive print job(s) */
     {
       close(fd);
       return (CUPS_BACKEND_FAILED);
     }
 
-    httpGetHostname(NULL, localhost, sizeof(localhost));
+    if (orighost && _cups_strcasecmp(orighost, "localhost"))
+      strlcpy(localhost, orighost, sizeof(localhost));
+    else
+      httpGetHostname(NULL, localhost, sizeof(localhost));
 
     snprintf(control, sizeof(control),
              "H%.31s\n"		/* RFC 1179, Section 7.2 - host name <= 31 chars */
@@ -978,7 +984,7 @@ lpd_queue(const char      *hostname,	/* I - Host to connect to */
       * Send the control file...
       */
 
-      if (lpd_command(fd, timeout, "\002%d cfA%03.3d%.15s\n", strlen(control),
+      if (lpd_command(fd, "\002%d cfA%03.3d%.15s\n", strlen(control),
                       (int)getpid() % 1000, localhost))
       {
 	close(fd);
@@ -997,17 +1003,12 @@ lpd_queue(const char      *hostname,	/* I - Host to connect to */
       }
       else
       {
-        alarm(timeout);
-
         if (read(fd, &status, 1) < 1)
 	{
 	  _cupsLangPrintFilter(stderr, "WARNING",
-			       _("Printer did not respond after %d seconds."),
-			       timeout);
+	                       _("The printer did not respond."));
 	  status = errno;
 	}
-
-        alarm(0);
       }
 
       if (status != 0)
@@ -1033,7 +1034,7 @@ lpd_queue(const char      *hostname,	/* I - Host to connect to */
       * Send the print file...
       */
 
-      if (lpd_command(fd, timeout, "\003" CUPS_LLFMT " dfA%03.3d%.15s\n",
+      if (lpd_command(fd, "\003" CUPS_LLFMT " dfA%03.3d%.15s\n",
                       CUPS_LLCAST filestats.st_size, (int)getpid() % 1000,
 		      localhost))
       {
@@ -1084,17 +1085,12 @@ lpd_queue(const char      *hostname,	/* I - Host to connect to */
 	  * want to requeue it over and over...
 	  */
 
-	  alarm(timeout);
-
           if (recv(fd, &status, 1, 0) < 1)
 	  {
 	    _cupsLangPrintFilter(stderr, "WARNING",
-			         _("Printer did not respond after %d seconds."),
-			         timeout);
+			         _("The printer did not respond."));
 	    status = 0;
           }
-
-	  alarm(0);
 	}
       }
       else
@@ -1121,7 +1117,7 @@ lpd_queue(const char      *hostname,	/* I - Host to connect to */
       * Send control file...
       */
 
-      if (lpd_command(fd, timeout, "\002%d cfA%03.3d%.15s\n", strlen(control),
+      if (lpd_command(fd, "\002%d cfA%03.3d%.15s\n", strlen(control),
                       (int)getpid() % 1000, localhost))
       {
 	close(fd);
@@ -1139,17 +1135,12 @@ lpd_queue(const char      *hostname,	/* I - Host to connect to */
       }
       else
       {
-        alarm(timeout);
-
         if (read(fd, &status, 1) < 1)
 	{
 	  _cupsLangPrintFilter(stderr, "WARNING",
-			       _("Printer did not respond after %d seconds."),
-			       timeout);
+			       _("The printer did not respond."));
 	  status = errno;
 	}
-
-	alarm(0);
       }
 
       if (status != 0)
@@ -1189,21 +1180,6 @@ lpd_queue(const char      *hostname,	/* I - Host to connect to */
   */
 
   return (CUPS_BACKEND_FAILED);
-}
-
-
-/*
- * 'lpd_timeout()' - Handle timeout alarms...
- */
-
-static void
-lpd_timeout(int sig)			/* I - Signal number */
-{
-  (void)sig;
-
-#if !defined(HAVE_SIGSET) && !defined(HAVE_SIGACTION)
-  signal(SIGALRM, lpd_timeout);
-#endif /* !HAVE_SIGSET && !HAVE_SIGACTION */
 }
 
 

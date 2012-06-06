@@ -1,9 +1,9 @@
 /*
- * "$Id: pwg-private.h 2351 2010-07-15 03:06:02Z msweet $"
+ * "$Id: pwg-private.h 3810 2012-05-04 23:39:14Z msweet $"
  *
  *   Private PWG media API definitions for CUPS.
  *
- *   Copyright 2009-2010 by Apple Inc.
+ *   Copyright 2009-2012 by Apple Inc.
  *
  *   These coded instructions, statements, and computer programs are the
  *   property of Apple Inc. and are protected by Federal copyright
@@ -39,7 +39,7 @@ extern "C" {
  */
 
 /* Convert from points to 2540ths */
-#  define _PWG_FROMPTS(n)	(int)((n) * 2540 / 72)
+#  define _PWG_FROMPTS(n)	(int)(((n) * 2540 + 36) / 72)
 /* Convert from 2540ths to points */
 #  define _PWG_TOPTS(n)		((n) * 72.0 / 2540.0)
 
@@ -79,6 +79,9 @@ typedef struct _pwg_size_s		/**** Size element - PPD to/from PWG */
  * Functions...
  */
 
+extern char		*_pwgFormatInches(char *buf, size_t bufsize, int val);
+extern char		*_pwgFormatMillimeters(char *buf, size_t bufsize,
+			                       int val);
 extern void		_pwgGenerateSize(char *keyword, size_t keysize,
 				         const char *prefix,
 					 const char *name,
@@ -90,7 +93,6 @@ extern _pwg_media_t	*_pwgMediaForPPD(const char *ppd);
 extern _pwg_media_t	*_pwgMediaForPWG(const char *pwg);
 extern _pwg_media_t	*_pwgMediaForSize(int width, int length);
 
-
 #  ifdef __cplusplus
 }
 #  endif /* __cplusplus */
@@ -98,5 +100,5 @@ extern _pwg_media_t	*_pwgMediaForSize(int width, int length);
 #endif /* !_CUPS_PWG_PRIVATE_H_ */
 
 /*
- * End of "$Id: pwg-private.h 2351 2010-07-15 03:06:02Z msweet $".
+ * End of "$Id: pwg-private.h 3810 2012-05-04 23:39:14Z msweet $".
  */

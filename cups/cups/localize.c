@@ -3,7 +3,7 @@
  *
  *   PPD localization routines for CUPS.
  *
- *   Copyright 2007-2011 by Apple Inc.
+ *   Copyright 2007-2012 by Apple Inc.
  *   Copyright 1997-2007 by Easy Software Products, all rights reserved.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -61,7 +61,7 @@ static cups_lang_t	*ppd_ll_CC(char *ll_CC, int ll_CC_size);
  * descriptions, printer presets, and custom option parameters.  Each
  * localized string uses the UTF-8 character encoding.
  *
- * @since CUPS 1.2/Mac OS X 10.5@
+ * @since CUPS 1.2/OS X 10.5@
  */
 
 int					/* O - 0 on success, -1 on error */
@@ -246,7 +246,7 @@ ppdLocalizeAttr(ppd_file_t *ppd,	/* I - PPD file */
  *
  * If no value of the requested scheme can be found, NULL is returned.
  *
- * @since CUPS 1.3/Mac OS X 10.5@
+ * @since CUPS 1.3/OS X 10.5@
  */
 
 const char *				/* O - Value or NULL if not found */
@@ -310,9 +310,9 @@ ppdLocalizeIPPReason(
 		       !strncmp(reason, "shutdown", 8))
 	message = _("The printer is not connected.");
       else if (!strncmp(reason, "toner-low", 9))
-	message = _("The printer is low on toner.");
+	message = _("The printer is running low on toner.");
       else if (!strncmp(reason, "toner-empty", 11))
-	message = _("The printer is out of toner.");
+	message = _("The printer may be out of toner.");
       else if (!strncmp(reason, "cover-open", 10))
 	message = _("The printer's cover is open.");
       else if (!strncmp(reason, "interlock-open", 14))
@@ -332,9 +332,9 @@ ppdLocalizeIPPReason(
       else if (!strncmp(reason, "output-area-full", 16))
 	message = _("The output bin is full.");
       else if (!strncmp(reason, "marker-supply-low", 17))
-	message = _("The printer is almost out of ink.");		
+	message = _("The printer is running low on ink.");
       else if (!strncmp(reason, "marker-supply-empty", 19))
-	message = _("The printer is out of ink.");
+	message = _("The printer may be out of ink.");
       else if (!strncmp(reason, "marker-waste-almost-full", 24))
 	message = _("The printer's waste bin is almost full.");
       else if (!strncmp(reason, "marker-waste-full", 17))
@@ -351,7 +351,7 @@ ppdLocalizeIPPReason(
 	message = _("The developer unit will need to be replaced soon.");
       else if (!strncmp(reason, "developer-empty", 15))
 	message = _("The developer unit needs to be replaced.");
-		
+
       if (message)
       {
         strlcpy(buffer, _cupsLangString(lang, message), bufsize);
@@ -499,7 +499,7 @@ ppdLocalizeIPPReason(
  * text from the attribute value. If no localized text for the requested
  * name can be found, @code NULL@ is returned.
  *
- * @since CUPS 1.4/Mac OS X 10.6@
+ * @since CUPS 1.4/OS X 10.6@
  */
 
 const char *				/* O - Value or @code NULL@ if not found */
@@ -637,7 +637,7 @@ _ppdGetLanguages(ppd_file_t *ppd)	/* I - PPD file */
 /*
  * '_ppdHashName()' - Generate a hash value for a device or profile name.
  *
- * This function is primarily used on Mac OS X, but is generally accessible
+ * This function is primarily used on OS X, but is generally accessible
  * since cupstestppd needs to check for profile name collisions in PPD files...
  */
 

@@ -167,6 +167,8 @@ cgiClearVariables(void)
   _cgi_var_t	*v;			/* Current variable */
 
 
+  fputs("DEBUG: cgiClearVariables called.\n", stderr);
+
   for (v = form_vars, i = form_count; i > 0; v ++, i --)
   {
     _cupsStrFree(v->name);
@@ -401,6 +403,8 @@ cgiSetArray(const char *name,		/* I - Name of variable */
   if (name == NULL || value == NULL || element < 0 || element > 100000)
     return;
 
+  fprintf(stderr, "DEBUG: cgiSetArray: %s[%d]=\"%s\"\n", name, element, value);
+
   if ((var = cgi_find_variable(name)) == NULL)
   {
     cgi_add_variable(name, element, value);
@@ -452,19 +456,19 @@ cgiSetCookie(const char *name,		/* I - Name */
 
   printf("Set-Cookie: %s=%s;", name, value);
   if (path)
-    printf("; path=%s", path);
+    printf(" path=%s;", path);
   if (domain)
-    printf("; domain=%s", domain);
+    printf(" domain=%s;", domain);
   if (expires)
   {
     char	date[256];		/* Date string */
 
-    printf("; expires=%s", httpGetDateString2(expires, date, sizeof(date)));
+    printf(" expires=%s;", httpGetDateString2(expires, date, sizeof(date)));
   }
   if (secure)
-    puts("; secure;");
+    puts(" secure;");
   else
-    puts(";");
+    putchar('\n');
 }
 
 
@@ -531,6 +535,8 @@ cgiSetVariable(const char *name,	/* I - Name of variable */
 
   if (name == NULL || value == NULL)
     return;
+
+  fprintf(stderr, "cgiSetVariable: %s=\"%s\"\n", name, value);
 
   if ((var = cgi_find_variable(name)) == NULL)
   {

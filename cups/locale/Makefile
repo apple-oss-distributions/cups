@@ -3,7 +3,7 @@
 #
 #   Locale file makefile for CUPS.
 #
-#   Copyright 2007-2011 by Apple Inc.
+#   Copyright 2007-2012 by Apple Inc.
 #   Copyright 1993-2007 by Easy Software Products.
 #
 #   These coded instructions, statements, and computer programs are the
@@ -54,7 +54,7 @@ clean:
 #
 
 depend:
-	makedepend -Y -I.. -fDependencies $(OBJS:.o=.c) >/dev/null 2>&1
+	$(CC) -MM $(ALL_CFLAGS) $(OBJS:.o=.c) >Dependencies
 
 
 #
@@ -133,16 +133,19 @@ pot:	checkpo po2strings
 	cd ..; xgettext -o locale/cups.pot -cTRANSLATORS -s \
 		--keyword=_ --no-wrap \
 		--copyright-holder="Apple Inc." \
-		--package-name="CUPS" --package-version="1.5" \
+		--package-name="CUPS" --package-version="1.6" \
 		--msgid-bugs-address="http://www.cups.org/str.php" \
 		*/*.c */*.cxx
 	(cat cups.header; tail +6 cups.pot; cat cups.footer) > cups.pot.N
 	mv cups.pot.N cups.pot
 	echo Checking cups.pot...
 	./checkpo cups.pot
-	for loc in $(LANGUAGES) ; do \
-		echo Merging changes into cups_$$loc.po... ; \
-		msgmerge -o cups_$$loc.po -s -N --no-location cups_$$loc.po cups.pot ; \
+	for loc in *.po ; do \
+		if test $$loc = '*.po'; then \
+			break; \
+		fi; \
+		echo Merging changes into $$loc... ; \
+		msgmerge -o $$loc -s -N --no-location $$loc cups.pot ; \
 	done
 	echo Updating cups.strings...
 	./po2strings cups.pot cups.strings
@@ -169,7 +172,7 @@ checkall:	checkpo
 
 #
 # po2strings - A simple utility which uses iconv to convert GNU gettext
-#              message catalogs to Mac OS X .strings files.
+#              message catalogs to OS X .strings files.
 #
 # po2strings filename.po filename.strings
 #
@@ -182,8 +185,8 @@ po2strings:	po2strings.o ../cups/$(LIBCUPSSTATIC)
 
 
 #
-# strings2po - A simple utility which uses iconv to convert Mac OS X
-#              .strings files to GNU gettext message catalogs.
+# strings2po - A simple utility which uses iconv to convert OS X .strings files
+#              to GNU gettext message catalogs.
 #
 # strings2po filename.strings filename.po
 #
