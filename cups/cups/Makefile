@@ -1,9 +1,9 @@
 #
-# "$Id: Makefile 9632 2011-03-21 02:12:14Z mike $"
+# "$Id: Makefile 11093 2013-07-03 20:48:42Z msweet $"
 #
 #   API library Makefile for CUPS.
 #
-#   Copyright 2007-2012 by Apple Inc.
+#   Copyright 2007-2013 by Apple Inc.
 #   Copyright 1997-2006 by Easy Software Products, all rights reserved.
 #
 #   These coded instructions, statements, and computer programs are the
@@ -16,6 +16,14 @@
 #
 
 include ../Makedefs
+
+
+#
+# Options to build libcups without the use of deprecated APIs...
+#
+
+OPTIONS	=	-D_CUPS_NO_DEPRECATED=1 -D_PPD_DEPRECATED=""
+
 
 #
 # Object files...
@@ -105,6 +113,7 @@ HEADERS	=	\
 		ipp.h \
 		language.h \
 		ppd.h \
+		pwg.h \
 		raster.h \
 		sidechannel.h \
 		transcode.h \
@@ -193,6 +202,14 @@ depend:
 
 
 #
+# Run oclint to check code coverage...
+#
+
+oclint:
+	oclint -o=oclint.html -html $(LIBOBJS:.o=.c) -- $(ALL_CFLAGS)
+
+
+#
 # Install all targets...
 #
 
@@ -251,6 +268,7 @@ install-libs: $(INSTALLSTATIC)
 	if test "x$(SYMROOT)" != "x"; then \
 		$(INSTALL_DIR) $(SYMROOT); \
 		cp $(LIBCUPS) $(SYMROOT); \
+		dsymutil $(SYMROOT)/$(LIBCUPS); \
 	fi
 
 installstatic:
@@ -304,7 +322,7 @@ libcups.2.dylib:	$(LIBOBJS) $(LIBCUPSORDER)
 	echo Linking $@...
 	$(DSO) $(ARCHFLAGS) $(DSOFLAGS) -o $@ \
 		-install_name $(libdir)/$@ \
-		-current_version 2.9.0 \
+		-current_version 2.10.0 \
 		-compatibility_version 2.0.0 \
 		-exported_symbols_list t.exp \
 		$(LIBOBJS) $(LIBGSSAPI) $(SSLLIBS) $(DNSSDLIBS) \
@@ -333,7 +351,7 @@ libcups_s.a:	$(LIBOBJS) libcups_s.exp
 libcups.la:    $(LIBOBJS)
 	echo Linking $@...
 	$(CC) $(ARCHFLAGS) $(DSOFLAGS) -o $@ $(LIBOBJS:.o=.lo) \
-		-rpath $(LIBDIR) -version-info 2:9 $(LIBGSSAPI) $(SSLLIBS) \
+		-rpath $(LIBDIR) -version-info 2:10 $(LIBGSSAPI) $(SSLLIBS) \
 		$(DNSSDLIBS) $(COMMONLIBS) $(LIBZ)
 
 
@@ -518,8 +536,8 @@ apihelp:
 		--css ../doc/cups-printable.css \
 		--header api-cups.header --intro api-cups.shtml \
 		api-cups.xml \
-		cups.h adminutil.c dest.c language.c notify.c \
-		options.c tempfile.c usersys.c \
+		cups.h pwg.h adminutil.c dest*.c language.c notify.c \
+		options.c pwg-media.c tempfile.c usersys.c \
 		util.c >../doc/help/api-cups.html
 	mxmldoc --tokens help/api-cups.html api-cups.xml >../doc/help/api-cups.tokens
 	$(RM) api-cups.xml
@@ -573,7 +591,7 @@ framedhelp:
 		--section "Programming" --title "CUPS API" \
 		--css ../doc/cups-printable.css \
 		--header api-cups.header --intro api-cups.shtml \
-		cups.h adminutil.c dest.c language.c notify.c \
+		cups.h adminutil.c dest*.c language.c notify.c \
 		options.c tempfile.c usersys.c \
 		util.c
 	mxmldoc --framed api-filedir \
@@ -621,5 +639,5 @@ include Dependencies
 
 
 #
-# End of "$Id: Makefile 9632 2011-03-21 02:12:14Z mike $".
+# End of "$Id: Makefile 11093 2013-07-03 20:48:42Z msweet $".
 #

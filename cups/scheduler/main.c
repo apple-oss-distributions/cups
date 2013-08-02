@@ -1,5 +1,5 @@
 /*
- * "$Id: main.c 7925 2008-09-10 17:47:26Z mike $"
+ * "$Id: main.c 11093 2013-07-03 20:48:42Z msweet $"
  *
  *   Main loop for the CUPS scheduler.
  *
@@ -65,9 +65,14 @@
 #if defined(HAVE_MALLOC_H) && defined(HAVE_MALLINFO)
 #  include <malloc.h>
 #endif /* HAVE_MALLOC_H && HAVE_MALLINFO */
+
 #ifdef HAVE_NOTIFY_H
 #  include <notify.h>
 #endif /* HAVE_NOTIFY_H */
+
+#ifdef HAVE_SYS_PARAM_H
+#  include <sys/param.h>
+#endif /* HAVE_SYS_PARAM_H */
 
 
 /*
@@ -129,10 +134,6 @@ main(int  argc,				/* I - Number of command-line args */
 #if defined(HAVE_SIGACTION) && !defined(HAVE_SIGSET)
   struct sigaction	action;		/* Actions for POSIX signals */
 #endif /* HAVE_SIGACTION && !HAVE_SIGSET */
-#ifdef __sgi
-  cups_file_t		*fp;		/* Fake lpsched lock file */
-  struct stat		statbuf;	/* Needed for checking lpsched FIFO */
-#endif /* __sgi */
   int			run_as_child = 0;
 					/* Needed for background fork/exec */
 #ifdef __APPLE__
@@ -207,7 +208,6 @@ main(int  argc,				/* I - Number of command-line args */
 
                 char *current;		/* Current directory */
 
-
 	       /*
 	        * Allocate a buffer for the current working directory to
 		* reduce run-time stack usage; this approximates the
@@ -271,6 +271,29 @@ main(int  argc,				/* I - Number of command-line args */
 	      UseProfiles = 0;
 	      break;
 
+          case 's' : /* Set cups-files.conf location */
+              i ++;
+	      if (i >= argc)
+	      {
+	        _cupsLangPuts(stderr, _("cupsd: Expected cups-files.conf "
+	                                "filename after \"-s\" option."));
+	        usage(1);
+	      }
+
+              if (argv[i][0] != '/')
+	      {
+	       /*
+	        * Relative filename not allowed...
+		*/
+
+	        _cupsLangPuts(stderr, _("cupsd: Relative cups-files.conf "
+	                                "filename not allowed."));
+	        usage(1);
+              }
+
+	      cupsdSetString(&CupsFilesFile, argv[i]);
+	      break;
+
 #ifdef __APPLE__
           case 'S' : /* Disable system management functions */
               fputs("cupsd: -S (disable system management) for internal "
@@ -299,6 +322,35 @@ main(int  argc,				/* I - Number of command-line args */
 
   if (!ConfigurationFile)
     cupsdSetString(&ConfigurationFile, CUPS_SERVERROOT "/cupsd.conf");
+
+  if (!CupsFilesFile)
+  {
+    char	*filename,		/* Copy of cupsd.conf filename */
+		*slash;			/* Final slash in cupsd.conf filename */
+    size_t	len;			/* Size of buffer */
+
+    len = strlen(ConfigurationFile) + 15;
+    if ((filename = malloc(len)) == NULL)
+    {
+      _cupsLangPrintf(stderr,
+		      _("cupsd: Unable to get path to "
+			"cups-files.conf file."));
+      return (1);
+    }
+
+    strlcpy(filename, ConfigurationFile, len);
+    if ((slash = strrchr(filename, '/')) == NULL)
+    {
+      _cupsLangPrintf(stderr,
+		      _("cupsd: Unable to get path to "
+			"cups-files.conf file."));
+      return (1);
+    }
+
+    strlcpy(slash, "/cups-files.conf", len - (slash - filename));
+    cupsdSetString(&CupsFilesFile, filename);
+    free(filename);
+  }
 
  /*
   * If the user hasn't specified "-f", run in the background...
@@ -365,15 +417,15 @@ main(int  argc,				/* I - Number of command-line args */
       }
     }
 
-#ifdef __OpenBSD__
+#if defined(__OpenBSD__) && OpenBSD < 201211
    /*
     * Call _thread_sys_closefrom() so the child process doesn't reset the
     * parent's file descriptors to be blocking.  This is a workaround for a
-    * limitation of userland libpthread on OpenBSD.
+    * limitation of userland libpthread on older versions of OpenBSD.
     */
 
     _thread_sys_closefrom(0);
-#endif /* __OpenBSD__ */
+#endif /* __OpenBSD__ && OpenBSD < 201211 */
 
    /*
     * Since CoreFoundation and DBUS both create fork-unsafe data on execution of
@@ -483,17 +535,11 @@ main(int  argc,				/* I - Number of command-line args */
   */
 
   if (!cupsdReadConfiguration())
-  {
-    if (TestConfigFile)
-      printf("%s contains errors\n", ConfigurationFile);
-    else
-      syslog(LOG_LPR, "Unable to read configuration file \'%s\' - exiting!",
-	     ConfigurationFile);
     return (1);
-  }
   else if (TestConfigFile)
   {
-    printf("%s is OK\n", ConfigurationFile);
+    printf("\"%s\" is OK.\n", CupsFilesFile);
+    printf("\"%s\" is OK.\n", ConfigurationFile);
     return (0);
   }
 
@@ -564,28 +610,6 @@ main(int  argc,				/* I - Number of command-line args */
   signal(SIGPIPE, SIG_IGN);
   signal(SIGTERM, sigterm_handler);
 #endif /* HAVE_SIGSET */
-
-#ifdef __sgi
- /*
-  * Try to create a fake lpsched lock file if one is not already there.
-  * Some Adobe applications need it under IRIX in order to enable
-  * printing...
-  */
-
-  if ((fp = cupsFileOpen("/var/spool/lp/SCHEDLOCK", "w")) == NULL)
-  {
-    syslog(LOG_LPR, "Unable to create fake lpsched lock file "
-                    "\"/var/spool/lp/SCHEDLOCK\"\' - %s!",
-           strerror(errno));
-  }
-  else
-  {
-    fchmod(cupsFileNumber(fp), 0644);
-    fchown(cupsFileNumber(fp), User, Group);
-
-    cupsFileClose(fp);
-  }
-#endif /* __sgi */
 
  /*
   * Initialize authentication certificates...
@@ -781,9 +805,9 @@ main(int  argc,				/* I - Number of command-line args */
       * Got an error from select!
       */
 
-#ifdef HAVE_DNSSD
+#if defined(HAVE_DNSSD) || defined(HAVE_AVAHI)
       cupsd_printer_t	*p;		/* Current printer */
-#endif /* HAVE_DNSSD */
+#endif /* HAVE_DNSSD || HAVE_AVAHI */
 
 
       if (errno == EINTR)		/* Just interrupted by a signal */
@@ -824,13 +848,13 @@ main(int  argc,				/* I - Number of command-line args */
 			job->print_pipes[0], job->print_pipes[1],
 			job->back_pipes[0], job->back_pipes[1]);
 
-#ifdef HAVE_DNSSD
+#if defined(HAVE_DNSSD) || defined(HAVE_AVAHI)
       for (p = (cupsd_printer_t *)cupsArrayFirst(Printers);
 	   p;
 	   p = (cupsd_printer_t *)cupsArrayNext(Printers))
         cupsdLogMessage(CUPSD_LOG_EMERG, "printer[%s] reg_name=\"%s\"", p->name,
 	                p->reg_name ? p->reg_name : "(null)");
-#endif /* HAVE_DNSSD */
+#endif /* HAVE_DNSSD || HAVE_AVAHI */
 
       break;
     }
@@ -922,7 +946,7 @@ main(int  argc,				/* I - Number of command-line args */
       */
 
       cupsdDeleteCert(0);
-      cupsdAddCert(0, "root", NULL);
+      cupsdAddCert(0, "root", cupsdDefaultAuthType());
     }
 #endif /* !HAVE_AUTHORIZATION_H */
 
@@ -1114,35 +1138,6 @@ main(int  argc,				/* I - Number of command-line args */
     cupsdStopSystemMonitor();
 #endif /* __APPLE__ */
 
-#ifdef HAVE_GSSAPI
- /*
-  * Free the scheduler's Kerberos context...
-  */
-
-#  ifdef __APPLE__
- /*
-  * If the weak-linked GSSAPI/Kerberos library is not present, don't try
-  * to use it...
-  */
-
-  if (krb5_init_context != NULL)
-#  endif /* __APPLE__ */
-  if (KerberosContext)
-    krb5_free_context(KerberosContext);
-#endif /* HAVE_GSSAPI */
-
-#ifdef __sgi
- /*
-  * Remove the fake IRIX lpsched lock file, but only if the existing
-  * file is not a FIFO which indicates that the real IRIX lpsched is
-  * running...
-  */
-
-  if (!stat("/var/spool/lp/FIFO", &statbuf))
-    if (!S_ISFIFO(statbuf.st_mode))
-      unlink("/var/spool/lp/SCHEDLOCK");
-#endif /* __sgi */
-
   cupsdStopSelect();
 
   return (!stop_scheduler);
@@ -1290,7 +1285,7 @@ cupsdSetStringf(char       **s,		/* O - New string */
                 const char *f,		/* I - Printf-style format string */
 	        ...)			/* I - Additional args as needed */
 {
-  char		v[4096];		/* Formatting string value */
+  char		v[65536 + 64];		/* Formatting string value */
   va_list	ap;			/* Argument pointer */
   char		*olds;			/* Old string */
 
@@ -1457,7 +1452,7 @@ launchd_checkin(void)
 	lis->fd = fd;
 
 #  ifdef HAVE_SSL
-	if (_httpAddrPort(&(lis->address)) == 443)
+	if (httpAddrPort(&(lis->address)) == 443)
 	  lis->encryption = HTTP_ENCRYPT_ALWAYS;
 #  endif /* HAVE_SSL */
       }
@@ -2030,5 +2025,5 @@ usage(int status)			/* O - Exit status */
 
 
 /*
- * End of "$Id: main.c 7925 2008-09-10 17:47:26Z mike $".
+ * End of "$Id: main.c 11093 2013-07-03 20:48:42Z msweet $".
  */

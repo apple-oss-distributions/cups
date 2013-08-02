@@ -1,9 +1,9 @@
 #
-# "$Id: Makefile 7924 2008-09-10 17:36:13Z mike $"
+# "$Id: Makefile 11158 2013-07-17 18:31:56Z msweet $"
 #
 #   Backend makefile for CUPS.
 #
-#   Copyright 2007-2012 by Apple Inc.
+#   Copyright 2007-2013 by Apple Inc.
 #   Copyright 1997-2007 by Easy Software Products, all rights reserved.
 #
 #   These coded instructions, statements, and computer programs are the
@@ -109,6 +109,11 @@ install:	all install-data install-headers install-libs install-exec
 #
 
 install-data:
+	if test "x$(USBQUIRKS)" != x; then \
+		echo Installing USB quirks in $(USBQUIRKS); \
+		$(INSTALL_DIR) -m 755 $(USBQUIRKS); \
+		$(INSTALL_DATA) org.cups.usb-quirks $(USBQUIRKS); \
+	fi
 
 
 #
@@ -128,14 +133,15 @@ install-exec:	$(INSTALLXPC)
 		$(RM) $(SERVERBIN)/backend/$$file; \
 		$(LN) ipp $(SERVERBIN)/backend/$$file; \
 	done
-	if test "x$(DNSSD_BACKEND)" != x; then \
+	if test "x$(DNSSD_BACKEND)" != x -a `uname` = Darwin; then \
 		$(RM) $(SERVERBIN)/backend/mdns; \
 		$(LN) $(DNSSD_BACKEND) $(SERVERBIN)/backend/mdns; \
 	fi
 	if test "x$(SYMROOT)" != "x"; then \
 		$(INSTALL_DIR) $(SYMROOT); \
-		for file in $(TARGETS); do \
+		for file in $(RBACKENDS) $(UBACKENDS); do \
 			cp $$file $(SYMROOT); \
+			dsymutil $(SYMROOT)/$$file; \
 		done \
 	fi
 
@@ -212,9 +218,6 @@ testsupplies:	testsupplies.o libbackend.a ../cups/$(LIBCUPSSTATIC)
 	$(CC) $(LDFLAGS) -o testsupplies testsupplies.o libbackend.a \
 		../cups/$(LIBCUPSSTATIC) $(LIBGSSAPI) $(SSLLIBS) $(DNSSDLIBS) \
 		$(COMMONLIBS) $(LIBZ)
-	if test -x /usr/bin/dsymutil; then \
-		/usr/bin/dsymutil testsupplies; \
-	fi
 
 
 #
@@ -235,8 +238,10 @@ libbackend.a:	$(LIBOBJS)
 dnssd:	dnssd.o ../cups/$(LIBCUPS) libbackend.a
 	echo Linking $@...
 	$(CC) $(LDFLAGS) -o dnssd dnssd.o libbackend.a $(LIBS)
-	$(RM) mdns
-	$(LN) dnssd mdns
+	if test `uname` = Darwin; then \
+		$(RM) mdns; \
+		$(LN) dnssd mdns; \
+	fi
 
 
 #
@@ -296,5 +301,5 @@ include Dependencies
 
 
 #
-# End of "$Id: Makefile 7924 2008-09-10 17:36:13Z mike $".
+# End of "$Id: Makefile 11158 2013-07-17 18:31:56Z msweet $".
 #

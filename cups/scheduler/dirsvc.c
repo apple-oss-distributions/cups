@@ -1,9 +1,9 @@
 /*
- * "$Id: dirsvc.c 7933 2008-09-11 00:44:58Z mike $"
+ * "$Id: dirsvc.c 11194 2013-07-26 03:13:31Z msweet $"
  *
  *   Directory services routines for the CUPS scheduler.
  *
- *   Copyright 2007-2012 by Apple Inc.
+ *   Copyright 2007-2013 by Apple Inc.
  *   Copyright 1997-2007 by Easy Software Products, all rights reserved.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -234,9 +234,12 @@ cupsdStartBrowsing(void)
 
         if (FatalErrors & CUPSD_FATAL_BROWSE)
 	  cupsdEndProcess(getpid(), 0);
-      }
 
-      avahi_threaded_poll_start(DNSSDMaster);
+        avahi_threaded_poll_free(DNSSDMaster);
+        DNSSDMaster = NULL;
+      }
+      else
+	avahi_threaded_poll_start(DNSSDMaster);
     }
 #  endif /* HAVE_DNSSD */
 
@@ -255,7 +258,7 @@ cupsdStartBrowsing(void)
       if (httpAddrLocalhost(&(lis->address)))
 	continue;
 
-      DNSSDPort = _httpAddrPort(&(lis->address));
+      DNSSDPort = httpAddrPort(&(lis->address));
       break;
     }
 
@@ -456,17 +459,30 @@ cupsdUpdateDNSSDName(void)
   else
 #  endif /* __APPLE__ */
 #  ifdef HAVE_AVAHI
+  if (DNSSDClient)
   {
-    cupsdSetString(&DNSSDComputerName, avahi_client_get_host_name(DNSSDClient));
-    cupsdSetString(&DNSSDHostName,
-                   avahi_client_get_host_name_fqdn(DNSSDClient));
+    const char	*host_name = avahi_client_get_host_name(DNSSDClient);
+    const char	*host_fqdn = avahi_client_get_host_name_fqdn(DNSSDClient);
+
+    cupsdSetString(&DNSSDComputerName, host_name ? host_name : ServerName);
+
+    if (host_fqdn)
+      cupsdSetString(&DNSSDHostName, host_fqdn);
+    else if (strchr(ServerName, '.'))
+      cupsdSetString(&DNSSDHostName, ServerName);
+    else
+      cupsdSetStringf(&DNSSDHostName, "%s.local", ServerName);
   }
-#  else /* HAVE_DNSSD */
+  else
+#  endif /* HAVE_AVAHI */
   {
     cupsdSetString(&DNSSDComputerName, ServerName);
-    cupsdSetString(&DNSSDHostName, ServerName);
+
+    if (strchr(ServerName, '.'))
+      cupsdSetString(&DNSSDHostName, ServerName);
+    else
+      cupsdSetStringf(&DNSSDHostName, "%s.local", ServerName);
   }
-#  endif /* HAVE_AVAHI */
 
  /*
   * Then (re)register the web interface if enabled...
@@ -623,7 +639,9 @@ dnssdBuildTxtRecord(
     if (p->type & CUPS_PRINTER_FAX)
     {
       keyvalue[count  ][0] = "Fax";
-      keyvalue[count++][1] = (p->type & CUPS_PRINTER_FAX) ? "T" : "F";
+      keyvalue[count++][1] = "T";
+      keyvalue[count  ][0] = "rfo";
+      keyvalue[count++][1] = rp_str;
     }
 
     if (p->type & CUPS_PRINTER_COLOR)
@@ -1317,6 +1335,8 @@ dnssdStop(void)
   DNSSDMaster = NULL;
 
 #  else /* HAVE_AVAHI */
+  avahi_threaded_poll_stop(DNSSDMaster);
+
   avahi_client_free(DNSSDClient);
   DNSSDClient = NULL;
 
@@ -1650,5 +1670,5 @@ update_smb(int onoff)			/* I - 1 = turn on, 0 = turn off */
 
 
 /*
- * End of "$Id: dirsvc.c 7933 2008-09-11 00:44:58Z mike $".
+ * End of "$Id: dirsvc.c 11194 2013-07-26 03:13:31Z msweet $".
  */

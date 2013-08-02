@@ -1,9 +1,9 @@
 /*
- * "$Id: testmime.c 9047 2010-03-24 07:59:15Z mike $"
+ * "$Id: testmime.c 11093 2013-07-03 20:48:42Z msweet $"
  *
  *   MIME test program for CUPS.
  *
- *   Copyright 2007-2011 by Apple Inc.
+ *   Copyright 2007-2013 by Apple Inc.
  *   Copyright 1997-2006 by Easy Software Products, all rights reserved.
  *
  *   These coded instructions, statements, and computer programs are the
@@ -132,7 +132,7 @@ main(int  argc,				/* I - Number of command-line args */
     }
     else
     {
-      sscanf(argv[i], "%15[^/]/%31s", super, type);
+      sscanf(argv[i], "%15[^/]/%255s", super, type);
       dst = mimeType(mime, super, type);
 
       filters = mimeFilter2(mime, src, srcinfo.st_size, dst, &cost);
@@ -527,5 +527,5 @@ type_dir(mime_t     *mime,		/* I - MIME database */
 
 
 /*
- * End of "$Id: testmime.c 9047 2010-03-24 07:59:15Z mike $".
+ * End of "$Id: testmime.c 11093 2013-07-03 20:48:42Z msweet $".
  */

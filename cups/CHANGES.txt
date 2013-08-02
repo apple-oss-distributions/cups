@@ -1,69 +1,91 @@
-CHANGES.txt - 1.6b1 - 2012-05-22
+CHANGES.txt - 1.7.0 - 2013-08-01
 --------------------------------
 
-CHANGES IN CUPS V1.6b1
+CHANGES IN CUPS V1.7.0
 
-	- Documentation updates (STR #3927, STR #3980, STR #4010, STR #4068)
-	- The scheduler now consolidates all PPD updates from filters at the
-	  end of the job (STR #4075)
-	- CUPS now supports color management using colord (STR #3808)
-	- CUPS now supports Bonjour using Avahi (STR #3066)
-	- The PreserveJobFiles and PreserveJobHistory directives now support
-	  specification of a time interval (STR #3143)
-	- PPD files can now be archived in (gzip'd) tar files to further reduce
-	  the disk space used by PPD files (STR #3772)
-	- The network backends now deal with printers that report their levels
-	  in percent but do not specify a maximum capacity of 100 (STR #3551)
-	- The network backends now report full/almost-full waste bins in
-	  printers along with end-of-life for cleaning pads (STR #4017)
-	- Added a configure option to set the permissions of the installed
-	  cupsd (STR #3459)
-	- Added a new WITH-ALL-VALUES directive to ipptool EXPECT predicates
-	  (STR #3949)
-	- CUPS now supports a User directive in client.conf and the CUPS_USER
-	  environment variable for overriding the default username (STR #3114)
-	- Now set the PJL USERNAME variable as needed (STR #3100)
-	- Added support for usernames and passwords longer than 32 characters
-	  (STR #2856)
-	- Added a new MaxHoldTime directive to automatically cancel jobs that
-	  have been held indefinitely after a specific number of seconds
-	  (STR #2291)
-	- The LPD backend now uses the originating host name when it is not the
-	  local system (STR #2053)
-	- CUPS now prefers the suffix "dpcm" when reporting resolution in dots-
-	  per-centimeter (STR #4006)
-	- The configure script and build system no longer support building of
-	  separate 32-bit and 64-bit libraries.
-	- The "brightness", "columns", "fitplot", "gamma", "hue",
-	  "natural-scaling", "penwidth", "position", "ppi", "saturation", and
-	  "scaling" options are not longer supported (STR #4010)
-	- The "page-bottom", "page-left", "page-right", "page-top",
-	  "prettyprint", and "wrap" options have been deprecated (STR #4010)
-	- The scheduler now reports the standard "number-of-documents" attribute
-	  instead of the CUPS-specific "document-count" attribute in
-	  job objects.
-	- Added new destination connection and enumeration functions (STR #3924)
-	- Added new option, localization, and job submission functions that do
-	  not depend on PPD files (STR #3925)
-	- Added a new MaxJobTime directive for cupsd that specifies the maximum
-	  amount of time allowed for a job to complete before it is canceled.
-	- The default password callback now supports passwords up to 127
-	  characters.
-	- The scheduler now supports a DefaultAuthType of "auto" to
-	  automatically choose between Basic (username/password) and Negotiate
-	  (Kerberos) authentication.
-	- cupsSideChannelSNMPGet/Walk now support OIDs and values up to 64k in
-	  length.
-	- CUPS no longer supports automatic remote printers or implicit classes
-	  via the CUPS, LDAP, or SLP protocols (STR #3922, STR #3923)
-	- The PPD APIs are now deprecated and will be removed in a future
-	  version of CUPS (STR #3927)
-	- The default IPP version for requests is now 2.0 (STR #3929)
-	- The IPP APIs no longer expose the ipp_t or ipp_attribute_t structures
-	  and instead provide accessor functions (STR #3928)
-	- The scheduler will no longer run programs with group write permission.
-	- The PHP module has been removed (STR #3932)
-	- The bannertops, commandtoescpx, commandtopclx, imagetops,
-	  imagetoraster, pdftops, rastertoescpx, rastertopclx, and texttops
-	  filters have been removed (STR #3930)
-	- The serial and parallel backends have been removed (STR 3935)
+	- The scheduler did not respond using the hostname specified by the
+	  client (<rdar://problem/14583574>)
+	- Fax queues did not work when shared via Bonjour
+	  (<rdar://problem/14498310>)
+	- Error messages from the scheduler were not localized using the
+	  language specified in the client's IPP request
+	  (<rdar://problem/14128011>)
+	- Added an Italian localization (<rdar://problem/14481578>)
+	- Fixed a couple memory leaks in ippfind that were reported by Clang.
+	- Fixed a compile issue on 64-bit Linux with Clang - need to use the
+	  -pie option instead of -Wl,-pie now (<rdar://problem/14480938>)
+	- The ippfind utility reported the wrong port numbers when compiled
+	  against Avahi (<rdar://problem/14508324>)
+	- httpGetFd, httpGetFile, httpPutFd, and httpPutFile did not
+	  automatically reconnect if the server closed the connecion after the
+	  previous response.
+	- Fixed a compile error in libcups (<rdar://problem/14467141>)
+	- The scheduler incorrectly did not pass a FINAL_CONTENT_TYPE
+	  environment variable to the filters or backend
+	  (<rdar://problem/14355011>)
+	- The cups-exec helper program could fail randomly on OS X due to
+	  sandbox violations when closing excess file descriptors
+	  (<rdar://problem/14421943>)
+	- The scheduler incorrectly did not use the kqueue interface on OS X.
+
+
+CHANGES IN CUPS V1.7rc1
+
+	- Printer xxx-default values were not reported by Get-Printer-Attributes
+	  or lpoptions (<rdar://problem/14401795>)
+	- Fixed deprecation warnings for many functions on OS X so they are tied
+	  to the deployment version when building (<rdar://problem/14210079>)
+	- Fixed a build issue on ARM-based Linux systems - unable to validate
+	  va_list arguments.
+	- Added a new ippfind tool for finding IPP printers and other Bonjour
+	  services (<rdar://problem/13876199>)
+	- Fixed some issues with conversion of PWG media size names to
+	  hundredths of millimeters (<rdar://problem/14065748>)
+	- The IPP backend could crash on OS X when printing to a Kerberized
+	  printer (<rdar://problem/14040186>)
+	- The ipptool program now automatically extends timeouts when the
+	  output buffer is filled (<rdar://problem/14016099>)
+	- The ipptool program now supports the --help and --version options.
+	- The ipptool program did not continue past include file errors by
+	  default (<rdar://problem/13875803>)
+	- The ipptool program now supports FILE-ID and TEST-ID directives and
+	  includes their values in its XML output (<rdar://problem/13876038>)
+	- The ipptool program now supports WITH-HOSTNAME, WITH-RESOURCE, and
+	  WITH-SCHEME expect predicates to compare the corresponding URI
+	  components (<rdar://problem/13876091>)
+
+
+CHANGES IN CUPS V1.7b1
+
+	- The configure script now supports a --with-rundir option to change
+	  the transient run-time state directory from the default to other
+	  locations like /run/cups (STR #4306)
+	- The scheduler now supports PPD lookups for classes (STR #4296)
+	- The cupsfilter program did not set the FINAL_CONTENT_TYPE
+	  environment variable for filters.
+	- Added a new "-x" option to the cancel command (STR #4103)
+	- Made the PWG media handling APIs public (STR #4267)
+	- Implemented ready media support for the cupsGetDestMediaXxx APIs
+	  (STR #4289)
+	- Added new cupsFindDestDefault, cupsFindDestReady, and
+	  cupsFindDestSupported APIs (STR #4289)
+	- Added new cupsGetDestMediaByIndex, cupsGetDestMediaCount, and
+	  cupsGetDestMediaDefault APIs (STR #4289)
+	- Added new ippGet/SetOctetString APIs for getting and setting an
+	  octetString value (STR #4289)
+	- Added new ippCreateRequestedArray API for generating a array of
+	  attributes from the requested-attributes attribute.
+	- The ipptool utility now supports compression, conditional tests based
+	  on the presence of files, and new DEFINE predicates for STATUS.
+	- Added new IPP APIs for checking values (STR #4167)
+	- Added new IPP APis for adding and setting formatted strings.
+	- Added new HTTP APIs to support basic server functionality via libcups.
+	- The dnssd backend now generates a 1284 device ID as needed (STR #3702)
+	- CUPS now supports compressing and decompressing streamed data
+	  (STR #4168)
+	- CUPS now supports higher-level PIN printing, external accounting
+	  systems, and "print here" printing environments (STR #4169)
+	- IRIX is no longer a supported operating system (STR #4092)
+	- The PPD compiler now supports JCL options properly (STR #4115)
+	- The web interface now checks whether the web browser has cookies
+	  enabled and displays a suitable error message (STR #4141)
