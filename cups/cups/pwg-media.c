@@ -1,35 +1,17 @@
 /*
- * "$Id: pwg-media.c 11093 2013-07-03 20:48:42Z msweet $"
+ * "$Id: pwg-media.c 11934 2014-06-17 18:58:29Z msweet $"
  *
- *   PWG media name API implementation for CUPS.
+ * PWG media name API implementation for CUPS.
  *
- *   Copyright 2009-2013 by Apple Inc.
+ * Copyright 2009-2014 by Apple Inc.
  *
- *   These coded instructions, statements, and computer programs are the
- *   property of Apple Inc. and are protected by Federal copyright
- *   law.  Distribution and use rights are outlined in the file "LICENSE.txt"
- *   which should have been included with this file.  If this file is
- *   file is missing or damaged, see the license at "http://www.cups.org/".
+ * These coded instructions, statements, and computer programs are the
+ * property of Apple Inc. and are protected by Federal copyright
+ * law.  Distribution and use rights are outlined in the file "LICENSE.txt"
+ * which should have been included with this file.  If this file is
+ * file is missing or damaged, see the license at "http://www.cups.org/".
  *
- *   This file is subject to the Apple OS-Developed Software exception.
- *
- * Contents:
- *
- *   pwgFormatSizeName()      - Generate a PWG self-describing media size name.
- *   pwgInitSize()	      - Initialize a pwg_size_t structure using IPP Job
- *				Template attributes.
- *   pwgMediaForLegacy()      - Find a PWG media size by ISO/IPP legacy name.
- *   pwgMediaForPPD()	      - Find a PWG media size by Adobe PPD name.
- *   pwgMediaForPWG()	      - Find a PWG media size by 5101.1 self-describing
- *				name.
- *   pwgMediaForSize()	      - Get the PWG media size for the given
- *				dimensions.
- *   pwg_compare_legacy()     - Compare two sizes using the legacy names.
- *   pwg_compare_ppd()	      - Compare two sizes using the PPD names.
- *   pwg_compare_pwg()	      - Compare two sizes using the PWG names.
- *   pwg_format_inches()      - Convert and format PWG units as inches.
- *   pwg_format_millimeters() - Convert and format PWG units as millimeters.
- *   pwg_scan_measurement()   - Scan a measurement in inches or millimeters.
+ * This file is subject to the Apple OS-Developed Software exception.
  */
 
 /*
@@ -233,13 +215,11 @@ static pwg_media_t const cups_pwg_media[] =
   _PWG_MEDIA_MM("prc_4_110x208mm", NULL, "EnvPRC4", 110, 208),
   _PWG_MEDIA_MM("prc_8_120x309mm", NULL, "EnvPRC8", 120, 309),
   _PWG_MEDIA_MM("prc_6_120x320mm", NULL, NULL, 120, 320),
-  _PWG_MEDIA_MM("prc_3_125x176mm", NULL, "EnvPRC3", 125, 176),
   _PWG_MEDIA_MM("prc_16k_146x215mm", NULL, "PRC16K", 146, 215),
   _PWG_MEDIA_MM("prc_7_160x230mm", NULL, "EnvPRC7", 160, 230),
   _PWG_MEDIA_MM("om_juuro-ku-kai_198x275mm", NULL, NULL, 198, 275),
   _PWG_MEDIA_MM("om_pa-kai_267x389mm", NULL, NULL, 267, 389),
   _PWG_MEDIA_MM("om_dai-pa-kai_275x395mm", NULL, NULL, 275, 395),
-  _PWG_MEDIA_MM("prc_10_324x458mm", NULL, "EnvPRC10", 324, 458),
 
   /* Chinese Standard Sheet Media Inch Sizes */
   _PWG_MEDIA_IN("roc_16k_7.75x10.75in", NULL, "roc16k", 7.75, 10.75),
@@ -251,7 +231,6 @@ static pwg_media_t const cups_pwg_media[] =
   /* Other Metric Standard Sheet Media Sizes */
   _PWG_MEDIA_MM("om_small-photo_100x150mm", NULL, "om_small-photo", 100, 150),
   _PWG_MEDIA_MM("om_italian_110x230mm", NULL, "EnvItalian", 110, 230),
-  _PWG_MEDIA_MM("om_postfix_114x229mm", NULL, NULL, 114, 229),
   _PWG_MEDIA_MM("om_large-photo_200x300", NULL, "om_large-photo", 200, 300),
   _PWG_MEDIA_MM("om_folio_210x330mm", "folio", "Folio", 210, 330),
   _PWG_MEDIA_MM("om_folio-sp_215x315mm", NULL, "FolioSP", 215, 315),
@@ -378,10 +357,10 @@ pwgFormatSizeName(char       *keyword,	/* I - Keyword buffer */
   */
 
   uptr = usize;
-  (*format)(uptr, sizeof(usize) - (uptr - usize), width);
+  (*format)(uptr, sizeof(usize) - (size_t)(uptr - usize), width);
   uptr += strlen(uptr);
   *uptr++ = 'x';
-  (*format)(uptr, sizeof(usize) - (uptr - usize), length);
+  (*format)(uptr, sizeof(usize) - (size_t)(uptr - usize), length);
   uptr += strlen(uptr);
 
  /*
@@ -933,6 +912,24 @@ pwg_media_t *				/* O - PWG media name */
 pwgMediaForSize(int width,		/* I - Width in hundredths of millimeters */
 		int length)		/* I - Length in hundredths of millimeters */
 {
+ /*
+  * Adobe uses a size matching algorithm with an epsilon of 5 points, which
+  * is just about 176/2540ths...
+  */
+
+  return (_pwgMediaNearSize(width, length, 176));
+}
+
+
+/*
+ * '_pwgMediaNearSize()' - Get the PWG media size within the given tolerance.
+ */
+
+pwg_media_t *				/* O - PWG media name */
+_pwgMediaNearSize(int width,	        /* I - Width in hundredths of millimeters */
+		  int length,		/* I - Length in hundredths of millimeters */
+		  int epsilon)		/* I - Match within this tolernace. PWG units */
+{
   int		i;			/* Looping var */
   pwg_media_t	*media,			/* Current media */
 		*best_media = NULL;	/* Best match */
@@ -958,17 +955,13 @@ pwgMediaForSize(int width,		/* I - Width in hundredths of millimeters */
        i > 0;
        i --, media ++)
   {
-   /*
-    * Adobe uses a size matching algorithm with an epsilon of 5 points, which
-    * is just about 176/2540ths...
-    */
 
     dw = abs(media->width - width);
     dl = abs(media->length - length);
 
     if (!dw && !dl)
       return (media);
-    else if (dw < 176 && dl < 176)
+    else if (dw <= epsilon && dl <= epsilon)
     {
       if (dw <= best_dw && dl <= best_dl)
       {
@@ -1001,6 +994,19 @@ pwgMediaForSize(int width,		/* I - Width in hundredths of millimeters */
 /* For OS X 10.8 and earlier */
 pwg_media_t *_pwgMediaForSize(int width, int length)
 { return (pwgMediaForSize(width, length)); }
+
+
+/*
+ * '_pwgMediaTable()' - Return the internal media size table.
+ */
+
+const pwg_media_t *			/* O - Pointer to first entry */
+_pwgMediaTable(size_t *num_media)	/* O - Number of entries */
+{
+  *num_media = sizeof(cups_pwg_media) / sizeof(cups_pwg_media[0]);
+
+  return (cups_pwg_media);
+}
 
 
 /*
@@ -1174,5 +1180,5 @@ pwg_scan_measurement(
 
 
 /*
- * End of "$Id: pwg-media.c 11093 2013-07-03 20:48:42Z msweet $".
+ * End of "$Id: pwg-media.c 11934 2014-06-17 18:58:29Z msweet $".
  */

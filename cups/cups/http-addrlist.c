@@ -1,25 +1,18 @@
 /*
- * "$Id: http-addrlist.c 11093 2013-07-03 20:48:42Z msweet $"
+ * "$Id: http-addrlist.c 11645 2014-02-27 16:35:53Z msweet $"
  *
- *   HTTP address list routines for CUPS.
+ * HTTP address list routines for CUPS.
  *
- *   Copyright 2007-2013 by Apple Inc.
- *   Copyright 1997-2007 by Easy Software Products, all rights reserved.
+ * Copyright 2007-2014 by Apple Inc.
+ * Copyright 1997-2007 by Easy Software Products, all rights reserved.
  *
- *   These coded instructions, statements, and computer programs are the
- *   property of Apple Inc. and are protected by Federal copyright
- *   law.  Distribution and use rights are outlined in the file "LICENSE.txt"
- *   which should have been included with this file.  If this file is
- *   file is missing or damaged, see the license at "http://www.cups.org/".
+ * These coded instructions, statements, and computer programs are the
+ * property of Apple Inc. and are protected by Federal copyright
+ * law.  Distribution and use rights are outlined in the file "LICENSE.txt"
+ * which should have been included with this file.  If this file is
+ * file is missing or damaged, see the license at "http://www.cups.org/".
  *
- * Contents:
- *
- *   httpAddrConnect()	- Connect to any of the addresses in the list.
- *   httpAddrConnect2() - Connect to any of the addresses in the list with a
- *			  timeout and optional cancel.
- *   httpAddrCopyList() - Copy an address list.
- *   httpAddrFreeList() - Free an address list.
- *   httpAddrGetList()	- Get a list of addresses for a hostname.
+ * This file is subject to the Apple OS-Developed Software exception.
  */
 
 /*
@@ -122,7 +115,7 @@ httpAddrConnect2(
 		  httpAddrString(&(addrlist->addr), temp, sizeof(temp)),
 		  httpAddrPort(&(addrlist->addr))));
 
-    if ((*sock = (int)socket(_httpAddrFamily(&(addrlist->addr)), SOCK_STREAM,
+    if ((*sock = (int)socket(httpAddrFamily(&(addrlist->addr)), SOCK_STREAM,
                              0)) < 0)
     {
      /*
@@ -187,8 +180,7 @@ httpAddrConnect2(
     * Then connect...
     */
 
-    if (!connect(*sock, &(addrlist->addr.addr),
-                 httpAddrLength(&(addrlist->addr))))
+    if (!connect(*sock, &(addrlist->addr.addr), (socklen_t)httpAddrLength(&(addrlist->addr))))
     {
       DEBUG_printf(("1httpAddrConnect2: Connected to %s:%d...",
 		    httpAddrString(&(addrlist->addr), temp, sizeof(temp)),
@@ -225,11 +217,7 @@ httpAddrConnect2(
 
             DEBUG_puts("1httpAddrConnect2: Canceled connect()");
 
-#    ifdef WIN32
-	    closesocket(*sock);
-#    else
-	    close(*sock);
-#    endif /* WIN32 */
+            httpAddrClose(NULL, *sock);
 
 	    *sock = -1;
 
@@ -297,11 +285,7 @@ httpAddrConnect2(
     * Close this socket and move to the next address...
     */
 
-#ifdef WIN32
-    closesocket(*sock);
-#else
-    close(*sock);
-#endif /* WIN32 */
+    httpAddrClose(NULL, *sock);
 
     *sock    = -1;
     addrlist = addrlist->next;
@@ -464,6 +448,7 @@ httpAddrGetList(const char *hostname,	/* I - Hostname, IP address, or NULL for p
 
     if ((first = (http_addrlist_t *)calloc(1, sizeof(http_addrlist_t))) != NULL)
     {
+      addr = first;
       first->addr.un.sun_family = AF_LOCAL;
       strlcpy(first->addr.un.sun_path, hostname, sizeof(first->addr.un.sun_path));
     }
@@ -647,9 +632,10 @@ httpAddrGetList(const char *hostname,	/* I - Hostname, IP address, or NULL for p
 	    return (NULL);
 
           first->addr.ipv4.sin_family = AF_INET;
-          first->addr.ipv4.sin_addr.s_addr = htonl(((((((ip[0] << 8) |
-	                                               ip[1]) << 8) |
-						     ip[2]) << 8) | ip[3]));
+          first->addr.ipv4.sin_addr.s_addr = htonl((((((((unsigned)ip[0] << 8) |
+	                                               (unsigned)ip[1]) << 8) |
+						     (unsigned)ip[2]) << 8) |
+						   (unsigned)ip[3]));
           first->addr.ipv4.sin_port = htons(portnum);
 	}
       }
@@ -882,5 +868,5 @@ httpAddrGetList(const char *hostname,	/* I - Hostname, IP address, or NULL for p
 
 
 /*
- * End of "$Id: http-addrlist.c 11093 2013-07-03 20:48:42Z msweet $".
+ * End of "$Id: http-addrlist.c 11645 2014-02-27 16:35:53Z msweet $".
  */

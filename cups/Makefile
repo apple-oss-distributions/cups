@@ -1,16 +1,16 @@
 #
-# "$Id: Makefile 11110 2013-07-08 21:17:10Z msweet $"
+# "$Id: Makefile 12078 2014-07-31 11:45:57Z msweet $"
 #
-#   Top-level Makefile for CUPS.
+# Top-level Makefile for CUPS.
 #
-#   Copyright 2007-2013 by Apple Inc.
-#   Copyright 1997-2007 by Easy Software Products, all rights reserved.
+# Copyright 2007-2014 by Apple Inc.
+# Copyright 1997-2007 by Easy Software Products, all rights reserved.
 #
-#   These coded instructions, statements, and computer programs are the
-#   property of Apple Inc. and are protected by Federal copyright
-#   law.  Distribution and use rights are outlined in the file "LICENSE.txt"
-#   which should have been included with this file.  If this file is
-#   file is missing or damaged, see the license at "http://www.cups.org/".
+# These coded instructions, statements, and computer programs are the
+# property of Apple Inc. and are protected by Federal copyright
+# law.  Distribution and use rights are outlined in the file "LICENSE.txt"
+# which should have been included with this file.  If this file is
+# file is missing or damaged, see the license at "http://www.cups.org/".
 #
 
 include Makedefs
@@ -98,22 +98,18 @@ clean:
 
 distclean:	clean
 	$(RM) Makedefs config.h config.log config.status
+	$(RM) conf/cups-files.conf conf/cupsd.conf conf/mime.convs conf/pam.std conf/snmp.conf
 	$(RM) cups-config
-	$(RM) conf/cupsd.conf conf/mime.convs conf/pam.std conf/snmp.conf
-	$(RM) doc/help/ref-cupsd-conf.html doc/help/standard.html doc/index.html
-	$(RM) man/client.conf.man
-	$(RM) man/cups-deviced.man man/cups-driverd.man
-	$(RM) man/cups-lpd.man man/cupsaddsmb.man man/cupsd.man
-	$(RM) man/cupsd.conf.man man/drv.man man/lpoptions.man
-	$(RM) packaging/cups.list
-	$(RM) packaging/cups-desc.plist packaging/cups-info.plist
-	$(RM) templates/header.tmpl
+	$(RM) data/testprint
 	$(RM) desktop/cups.desktop
-	$(RM) scheduler/cups.sh scheduler/cups-lpd.xinetd
-	$(RM) scheduler/org.cups.cups-lpd.plist scheduler/cups.xml
+	$(RM) doc/index.html
+	$(RM) man/client.conf.man man/cups-files.conf.man man/cups-lpd.man man/cups-snmp.man man/cupsaddsmb.man man/cupsd.conf.man man/cupsd.man man/lpoptions.man
+	$(RM) packaging/cups.list
+	$(RM) scheduler/cups-lpd.xinetd scheduler/cups.sh scheduler/cups.xml scheduler/org.cups.cups-lpd.plist scheduler/org.cups.cupsd.path scheduler/org.cups.cupsd.service scheduler/org.cups.cupsd.socket
+	$(RM) templates/header.tmpl
 	-$(RM) doc/*/index.html
 	-$(RM) templates/*/header.tmpl
-	-$(RM) -r autom4te*.cache clang cups/charmaps cups/locale driver/test
+	-$(RM) -r autom4te*.cache clang cups/charmaps cups/locale
 
 
 #
@@ -128,8 +124,11 @@ depend:
 
 
 #
-# Run the clang.llvm.org static code analysis tool on the C sources.
-# (at least checker-231 is required for scan-build to work this way)
+# Run the Clang static code analysis tool on the sources, available here:
+#
+#    http://clang-analyzer.llvm.org
+#
+# At least checker-231 is required.
 #
 
 .PHONY: clang clang-changes
@@ -138,6 +137,26 @@ clang:
 	scan-build -V -k -o `pwd`/clang $(MAKE) $(MFLAGS) clean all
 clang-changes:
 	scan-build -V -k -o `pwd`/clang $(MAKE) $(MFLAGS) all
+
+
+#
+# Run the STACK tool on the sources, available here:
+#
+#    http://css.csail.mit.edu/stack/
+#
+# Do the following to pass options to configure:
+#
+#    make CONFIGFLAGS="--foo --bar" stack
+#
+
+.PHONY: stack
+stack:
+	stack-build ./configure $(CONFIGFLAGS)
+	stack-build $(MAKE) $(MFLAGS) clean all
+	poptck
+	$(MAKE) $(MFLAGS) distclean
+	$(RM) */*.ll
+	$(RM) */*.ll.out
 
 
 #
@@ -300,7 +319,7 @@ sloc:
 
 EPMFLAGS	=	-v --output-dir dist $(EPMARCH)
 
-aix bsd deb depot inst pkg setld slackware swinstall tardist:
+bsd deb pkg slackware tardist:
 	epm $(EPMFLAGS) -f $@ cups packaging/cups.list
 
 epm:
@@ -329,5 +348,5 @@ dist:	all
 
 
 #
-# End of "$Id: Makefile 11110 2013-07-08 21:17:10Z msweet $".
+# End of "$Id: Makefile 12078 2014-07-31 11:45:57Z msweet $".
 #

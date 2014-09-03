@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# "$Id: 5.3-lpq.sh 6649 2007-07-11 21:46:42Z mike $"
+# "$Id: 5.3-lpq.sh 11468 2013-12-18 20:31:42Z msweet $"
 #
 #   Test the lpq command.
 #
@@ -27,5 +27,5 @@ fi
 echo ""
 
 #
-# End of "$Id: 5.3-lpq.sh 6649 2007-07-11 21:46:42Z mike $".
+# End of "$Id: 5.3-lpq.sh 11468 2013-12-18 20:31:42Z msweet $".
 #

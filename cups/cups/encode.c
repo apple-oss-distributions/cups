@@ -1,26 +1,18 @@
 /*
- * "$Id: encode.c 11118 2013-07-10 20:48:01Z msweet $"
+ * "$Id: encode.c 11742 2014-03-26 21:14:15Z msweet $"
  *
- *   Option encoding routines for CUPS.
+ * Option encoding routines for CUPS.
  *
- *   Copyright 2007-2013 by Apple Inc.
- *   Copyright 1997-2007 by Easy Software Products.
+ * Copyright 2007-2014 by Apple Inc.
+ * Copyright 1997-2007 by Easy Software Products.
  *
- *   These coded instructions, statements, and computer programs are the
- *   property of Apple Inc. and are protected by Federal copyright
- *   law.  Distribution and use rights are outlined in the file "LICENSE.txt"
- *   which should have been included with this file.  If this file is
- *   file is missing or damaged, see the license at "http://www.cups.org/".
+ * These coded instructions, statements, and computer programs are the
+ * property of Apple Inc. and are protected by Federal copyright
+ * law.  Distribution and use rights are outlined in the file "LICENSE.txt"
+ * which should have been included with this file.  If this file is
+ * file is missing or damaged, see the license at "http://www.cups.org/".
  *
- *   This file is subject to the Apple OS-Developed Software exception.
- *
- * Contents:
- *
- *   cupsEncodeOptions()   - Encode printer options into IPP attributes.
- *   cupsEncodeOptions2()  - Encode printer options into IPP attributes for
- *                           a group.
- *   _ippFindOption()      - Find the attribute information for an option.
- *   compare_ipp_options() - Compare two IPP options.
+ * This file is subject to the Apple OS-Developed Software exception.
  */
 
 /*
@@ -41,7 +33,10 @@ static const ipp_op_t ipp_job_creation[] =
 {
   IPP_OP_PRINT_JOB,
   IPP_OP_PRINT_URI,
+  IPP_OP_VALIDATE_JOB,
   IPP_OP_CREATE_JOB,
+  IPP_OP_HOLD_JOB,
+  IPP_OP_SET_JOB_ATTRIBUTES,
   IPP_OP_CUPS_NONE
 };
 
@@ -51,6 +46,8 @@ static const ipp_op_t ipp_doc_creation[] =
   IPP_OP_PRINT_URI,
   IPP_OP_SEND_DOCUMENT,
   IPP_OP_SEND_URI,
+  IPP_OP_SET_JOB_ATTRIBUTES,
+  IPP_OP_SET_DOCUMENT_ATTRIBUTES,
   IPP_OP_CUPS_NONE
 };
 
@@ -59,8 +56,8 @@ static const ipp_op_t ipp_sub_creation[] =
   IPP_OP_PRINT_JOB,
   IPP_OP_PRINT_URI,
   IPP_OP_CREATE_JOB,
-  IPP_OP_CREATE_PRINTER_SUBSCRIPTION,
-  IPP_OP_CREATE_JOB_SUBSCRIPTION,
+  IPP_OP_CREATE_PRINTER_SUBSCRIPTIONS,
+  IPP_OP_CREATE_JOB_SUBSCRIPTIONS,
   IPP_OP_CUPS_NONE
 };
 
@@ -68,20 +65,10 @@ static const ipp_op_t ipp_all_print[] =
 {
   IPP_OP_PRINT_JOB,
   IPP_OP_PRINT_URI,
+  IPP_OP_VALIDATE_JOB,
   IPP_OP_CREATE_JOB,
   IPP_OP_SEND_DOCUMENT,
   IPP_OP_SEND_URI,
-  IPP_OP_CUPS_NONE
-};
-
-static const ipp_op_t ipp_all_limit[] =
-{
-  IPP_OP_GET_JOBS,
-  IPP_OP_GET_PRINTER_ATTRIBUTES,
-  IPP_OP_CUPS_GET_PRINTERS,
-  IPP_OP_CUPS_GET_CLASSES,
-  IPP_OP_CUPS_GET_DEVICES,
-  IPP_OP_CUPS_GET_PPDS,
   IPP_OP_CUPS_NONE
 };
 
@@ -90,18 +77,6 @@ static const ipp_op_t ipp_set_printer[] =
   IPP_OP_SET_PRINTER_ATTRIBUTES,
   IPP_OP_CUPS_ADD_MODIFY_PRINTER,
   IPP_OP_CUPS_ADD_MODIFY_CLASS,
-  IPP_OP_CUPS_NONE
-};
-
-static const ipp_op_t cups_am_class[] =
-{
-  IPP_OP_CUPS_ADD_MODIFY_CLASS,
-  IPP_OP_CUPS_NONE
-};
-
-static const ipp_op_t cups_am_printer[] =
-{
-  IPP_OP_CUPS_ADD_MODIFY_PRINTER,
   IPP_OP_CUPS_NONE
 };
 
@@ -176,6 +151,8 @@ static const _ipp_option_t ipp_options[] =
   { 0, "job-accounting-user-id", IPP_TAG_NAME,          IPP_TAG_JOB },
   { 0, "job-accounting-user-id-default", IPP_TAG_NAME,  IPP_TAG_PRINTER },
   { 0, "job-authorization-uri",	IPP_TAG_URI,		IPP_TAG_OPERATION },
+  { 0, "job-cancel-after",	IPP_TAG_INTEGER,	IPP_TAG_JOB },
+  { 0, "job-cancel-after-default", IPP_TAG_INTEGER,	IPP_TAG_PRINTER },
   { 0, "job-hold-until",	IPP_TAG_KEYWORD,	IPP_TAG_JOB },
   { 0, "job-id",		IPP_TAG_INTEGER,	IPP_TAG_ZERO }, /* never send as option */
   { 0, "job-impressions",	IPP_TAG_INTEGER,	IPP_TAG_ZERO }, /* never send as option */
@@ -672,7 +649,7 @@ cupsEncodeOptions2(
 	    * Integer/enumeration value...
 	    */
 
-            attr->values[j].integer = strtol(val, &s, 10);
+            attr->values[j].integer = (int)strtol(val, &s, 10);
 
             DEBUG_printf(("2cupsEncodeOptions2: Added integer option value "
 	                  "%d...", attr->values[j].integer));
@@ -714,12 +691,12 @@ cupsEncodeOptions2(
 	      s = val;
 	    }
 	    else
-	      attr->values[j].range.lower = strtol(val, &s, 10);
+	      attr->values[j].range.lower = (int)strtol(val, &s, 10);
 
 	    if (*s == '-')
 	    {
 	      if (s[1])
-		attr->values[j].range.upper = strtol(s + 1, NULL, 10);
+		attr->values[j].range.upper = (int)strtol(s + 1, NULL, 10);
 	      else
 		attr->values[j].range.upper = 2147483647;
             }
@@ -736,10 +713,10 @@ cupsEncodeOptions2(
 	    * Resolution...
 	    */
 
-	    attr->values[j].resolution.xres = strtol(val, &s, 10);
+	    attr->values[j].resolution.xres = (int)strtol(val, &s, 10);
 
 	    if (*s == 'x')
-	      attr->values[j].resolution.yres = strtol(s + 1, &s, 10);
+	      attr->values[j].resolution.yres = (int)strtol(s + 1, &s, 10);
 	    else
 	      attr->values[j].resolution.yres = attr->values[j].resolution.xres;
 
@@ -872,5 +849,5 @@ compare_ipp_options(_ipp_option_t *a,	/* I - First option */
 
 
 /*
- * End of "$Id: encode.c 11118 2013-07-10 20:48:01Z msweet $".
+ * End of "$Id: encode.c 11742 2014-03-26 21:14:15Z msweet $".
  */
