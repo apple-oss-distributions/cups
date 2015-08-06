@@ -1,9 +1,9 @@
 /*
- * "$Id: ipp-var.c 11934 2014-06-17 18:58:29Z msweet $"
+ * "$Id: ipp-var.c 12772 2015-07-02 16:16:25Z msweet $"
  *
  * CGI <-> IPP variable routines for CUPS.
  *
- * Copyright 2007-2014 by Apple Inc.
+ * Copyright 2007-2015 by Apple Inc.
  * Copyright 1997-2007 by Easy Software Products.
  *
  * These coded instructions, statements, and computer programs are the
@@ -222,6 +222,9 @@ cgiGetIPPObjects(ipp_t *response,	/* I - IPP response */
 	      break;
 
           case IPP_TAG_INTEGER :
+	      if (!strncmp(ippGetName(attr), "time-at-", 8))
+	        break;			/* Ignore time-at-xxx */
+
 	      for (i = 0; !add && i < attr->num_values; i ++)
 	      {
 	        char	buf[255];	/* Number buffer */
@@ -1202,21 +1205,7 @@ cgiSetIPPObjectVars(
 	      * Rewrite URIs...
 	      */
 
-              if (!strcmp(name, "member_uris"))
-	      {
-		char	url[1024];	/* URL for class member... */
-
-
-		cgiRewriteURL(attr->values[i].string.text, url,
-		              sizeof(url), NULL);
-
-                snprintf(valptr, sizeof(value) - (size_t)(valptr - value),
-		         "<A HREF=\"%s\">%s</A>", url,
-			 strrchr(attr->values[i].string.text, '/') + 1);
-	      }
-	      else
-		cgiRewriteURL(attr->values[i].string.text, valptr,
-		              (int)(sizeof(value) - (size_t)(valptr - value)), NULL);
+	      cgiRewriteURL(attr->values[i].string.text, valptr, (int)(sizeof(value) - (size_t)(valptr - value)), NULL);
               break;
             }
 
@@ -1561,5 +1550,5 @@ cgiText(const char *message)		/* I - Message */
 
 
 /*
- * End of "$Id: ipp-var.c 11934 2014-06-17 18:58:29Z msweet $".
+ * End of "$Id: ipp-var.c 12772 2015-07-02 16:16:25Z msweet $".
  */
