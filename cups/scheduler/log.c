@@ -1,9 +1,7 @@
 /*
- * "$Id: log.c 12827 2015-07-31 15:21:37Z msweet $"
- *
  * Log file routines for the CUPS scheduler.
  *
- * Copyright 2007-2015 by Apple Inc.
+ * Copyright 2007-2016 by Apple Inc.
  * Copyright 1997-2007 by Easy Software Products, all rights reserved.
  *
  * These coded instructions, statements, and computer programs are the
@@ -584,9 +582,7 @@ cupsdLogJob(cupsd_job_t *job,		/* I - Job */
   if (TestConfigFile || !ErrorLog)
     return (1);
 
-  if ((level > LogLevel ||
-       (level == CUPSD_LOG_INFO && LogLevel < CUPSD_LOG_DEBUG)) &&
-      LogDebugHistory <= 0)
+  if (level > LogLevel && LogDebugHistory <= 0)
     return (1);
 
 #ifdef HAVE_ASL_H
@@ -617,7 +613,7 @@ cupsdLogJob(cupsd_job_t *job,		/* I - Job */
 
       asl_set(m, PWG_Event, "JobStateChanged");
       asl_set(m, PWG_JobID, job_id);
-      asl_set(m, PWG_JobState, job_states[job->state_value - IPP_JSTATE_PENDING]);
+      asl_set(m, PWG_JobState, job->state_value < IPP_JSTATE_PENDING ? "" : job_states[job->state_value - IPP_JSTATE_PENDING]);
 
       if (job->impressions)
       {
@@ -637,7 +633,7 @@ cupsdLogJob(cupsd_job_t *job,		/* I - Job */
 #elif defined(HAVE_SYSTEMD_SD_JOURNAL_H)
   if (!strcmp(ErrorLog, "syslog"))
   {
-    cupsd_printer_t *printer = job->printer ? job->printer : job->dest ? cupsdFindDest(job->dest) : NULL;
+    cupsd_printer_t *printer = job ? (job->printer ? job->printer : (job->dest ? cupsdFindDest(job->dest) : NULL)) : NULL;
     static const char * const job_states[] =
     {					/* job-state strings */
       "Pending",
@@ -667,7 +663,7 @@ cupsdLogJob(cupsd_job_t *job,		/* I - Job */
 		      PWG_Event"=JobStateChanged",
 		      PWG_ServiceURI"=%s", printer ? printer->uri : "",
 		      PWG_JobID"=%d", job->id,
-		      PWG_JobState"=%s", job_states[job->state_value - IPP_JSTATE_PENDING],
+		      PWG_JobState"=%s", job->state_value < IPP_JSTATE_PENDING ? "" : job_states[job->state_value - IPP_JSTATE_PENDING],
 		      PWG_JobImpressionsCompleted"=%d", ippGetInteger(job->impressions, 0),
 		      NULL);
     else
@@ -702,10 +698,7 @@ cupsdLogJob(cupsd_job_t *job,		/* I - Job */
 
   if (status > 0)
   {
-    if (job &&
-        (level > LogLevel ||
-         (level == CUPSD_LOG_INFO && LogLevel < CUPSD_LOG_DEBUG)) &&
-	LogDebugHistory > 0)
+    if (job && level > LogLevel && LogDebugHistory > 0)
     {
      /*
       * Add message to the job history...
@@ -744,8 +737,7 @@ cupsdLogJob(cupsd_job_t *job,		/* I - Job */
 
       return (1);
     }
-    else if (level <= LogLevel &&
-             (level != CUPSD_LOG_INFO || LogLevel >= CUPSD_LOG_DEBUG))
+    else if (level <= LogLevel)
       return (cupsdWriteErrorLog(level, log_line));
     else
       return (1);
@@ -1476,7 +1468,7 @@ format_log_line(const char *message,	/* I - Printf-style format string */
   * Format the log message...
   */
 
-  len = vsnprintf(log_line, log_linesize, message, ap);
+  len = _cups_safe_vsnprintf(log_line, log_linesize, message, ap);
 
  /*
   * Resize the buffer as needed...
@@ -1485,7 +1477,6 @@ format_log_line(const char *message,	/* I - Printf-style format string */
   if ((size_t)len >= log_linesize && log_linesize < 65536)
   {
     char	*temp;			/* Temporary string pointer */
-
 
     len ++;
 
@@ -1507,8 +1498,3 @@ format_log_line(const char *message,	/* I - Printf-style format string */
 
   return (1);
 }
-
-
-/*
- * End of "$Id: log.c 12827 2015-07-31 15:21:37Z msweet $".
- */

@@ -1,9 +1,7 @@
 /*
- * "$Id: language.c 12836 2015-08-06 14:13:37Z msweet $"
- *
  * I18N/language support for CUPS.
  *
- * Copyright 2007-2015 by Apple Inc.
+ * Copyright 2007-2016 by Apple Inc.
  * Copyright 1997-2007 by Easy Software Products.
  *
  * These coded instructions, statements, and computer programs are the
@@ -1180,7 +1178,7 @@ appleLangDefault(void)
 	  * See if we have an Info.plist file in the bundle...
 	  */
 
-	  CFStringGetCString(cfpath, path,sizeof(path), kCFStringEncodingUTF8);
+	  CFStringGetCString(cfpath, path, sizeof(path), kCFStringEncodingUTF8);
 	  DEBUG_printf(("3appleLangDefault: Got a resource URL (\"%s\")", path));
 	  strlcat(path, "Contents/Info.plist", sizeof(path));
 
@@ -1211,7 +1209,6 @@ appleLangDefault(void)
 
     if (localizationList)
     {
-
 #ifdef DEBUG
       if (CFGetTypeID(localizationList) == CFArrayGetTypeID())
         DEBUG_printf(("3appleLangDefault: Got localizationList, %d entries.",
@@ -1287,6 +1284,8 @@ appleLangDefault(void)
       strlcpy(cg->language, "en_US.UTF-8", sizeof(cg->language));
     }
   }
+  else
+    DEBUG_printf(("3appleLangDefault: Using previous locale \"%s\".", cg->language));
 
  /*
   * Return the cached locale...
@@ -1336,6 +1335,18 @@ appleMessageLoad(const char *locale)	/* I - Locale ID */
     snprintf(filename, sizeof(filename), CUPS_BUNDLEDIR "/Resources/%s.lproj/cups.strings", locale);
   }
 
+  if (access(filename, 0))
+  {
+   /*
+    * <rdar://problem/25292403>
+    *
+    * Try with just the language code...
+    */
+
+    strlcpy(baselang, locale, sizeof(baselang));
+    snprintf(filename, sizeof(filename), CUPS_BUNDLEDIR "/Resources/%s.lproj/cups.strings", baselang);
+  }
+
   DEBUG_printf(("1appleMessageLoad: filename=\"%s\"", filename));
 
   if (access(filename, 0))
@@ -1346,7 +1357,9 @@ appleMessageLoad(const char *locale)	/* I - Locale ID */
 
     if (!strncmp(locale, "en", 2))
       locale = "English";
-    else if (!strncmp(locale, "nb", 2) || !strncmp(locale, "nl", 2))
+    else if (!strncmp(locale, "nb", 2))
+      locale = "no";
+    else if (!strncmp(locale, "nl", 2))
       locale = "Dutch";
     else if (!strncmp(locale, "fr", 2))
       locale = "French";
@@ -1475,7 +1488,7 @@ cups_cache_lookup(
   for (lang = lang_cache; lang != NULL; lang = lang->next)
   {
     DEBUG_printf(("9cups_cache_lookup: lang=%p, language=\"%s\", "
-		  "encoding=%d(%s)", lang, lang->language, lang->encoding,
+		  "encoding=%d(%s)", (void *)lang, lang->language, lang->encoding,
 		  lang_encodings[lang->encoding]));
 
     if (!strcmp(lang->language, name) &&
@@ -1620,8 +1633,3 @@ cups_unquote(char       *d,		/* O - Unquoted string */
 
   *d = '\0';
 }
-
-
-/*
- * End of "$Id: language.c 12836 2015-08-06 14:13:37Z msweet $".
- */

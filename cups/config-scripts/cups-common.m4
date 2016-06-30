@@ -1,9 +1,7 @@
 dnl
-dnl "$Id: cups-common.m4 12827 2015-07-31 15:21:37Z msweet $"
-dnl
 dnl Common configuration stuff for CUPS.
 dnl
-dnl Copyright 2007-2015 by Apple Inc.
+dnl Copyright 2007-2016 by Apple Inc.
 dnl Copyright 1997-2007 by Easy Software Products, all rights reserved.
 dnl
 dnl These coded instructions, statements, and computer programs are the
@@ -18,21 +16,7 @@ AC_CONFIG_HEADER(config.h)
 
 dnl Version number information...
 CUPS_VERSION="AC_PACKAGE_VERSION"
-
-case "$CUPS_VERSION" in
-	*svn)
-		if test -z "$CUPS_REVISION" -a -d .svn; then
-			CUPS_REVISION="-r`svnversion . | awk -F: '{print $NF}' | sed -e '1,$s/[[a-zA-Z]]*//g'`"
-		else
-			CUPS_REVISION=""
-		fi
-		;;
-
-	*)
-		CUPS_REVISION=""
-		;;
-esac
-
+CUPS_REVISION=""
 CUPS_BUILD="cups-$CUPS_VERSION"
 
 AC_ARG_WITH(cups_build, [  --with-cups-build       set "cups-config --build" string ],
@@ -215,6 +199,9 @@ AC_CHECK_FUNCS(waitpid wait3)
 dnl Check for posix_spawn
 AC_CHECK_FUNCS(posix_spawn)
 
+dnl Check for getgrouplist
+AC_CHECK_FUNCS(getgrouplist)
+
 dnl See if the tm structure has the tm_gmtoff member...
 AC_MSG_CHECKING(for tm_gmtoff member in tm structure)
 AC_TRY_COMPILE([#include <time.h>],[struct tm t;
@@ -327,7 +314,7 @@ DBUSDIR=""
 DBUS_NOTIFIER=""
 DBUS_NOTIFIERLIBS=""
 
-if test "x$enable_dbus" != xno -a "x$PKGCONFIG" != x; then
+if test "x$enable_dbus" != xno -a "x$PKGCONFIG" != x -a "x$uname" != xDarwin; then
 	AC_MSG_CHECKING(for DBUS)
 	if $PKGCONFIG --exists dbus-1; then
 		AC_MSG_RESULT(yes)
@@ -472,7 +459,3 @@ case "$COMPONENTS" in
 esac
 
 AC_SUBST(BUILDDIRS)
-
-dnl
-dnl End of "$Id: cups-common.m4 12827 2015-07-31 15:21:37Z msweet $".
-dnl

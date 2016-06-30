@@ -1,11 +1,11 @@
 #
-# "$Id: cups.spec.in 12715 2015-06-08 21:15:45Z msweet $"
+# "$Id: cups.spec.in 13178 2016-06-30 20:20:43Z msweet $"
 #
 # RPM "spec" file for CUPS.
 #
 # Original version by Jason McMullan <jmcc@ontv.com>.
 #
-# Copyright 2007-2015 by Apple Inc.
+# Copyright 2007-2016 by Apple Inc.
 # Copyright 1999-2007 by Easy Software Products, all rights reserved.
 #
 # These coded instructions, statements, and computer programs are the
@@ -21,6 +21,7 @@
 #   dnssd    - Enable/disable DNS-SD support (default = enable)
 #   libusb1  - Enable/disable LIBUSB 1.0 support (default = enable)
 #   static   - Enable/disable static libraries (default = enable)
+#   systemd  - Enable/disable systemd support (default = enable)
 
 %{!?_with_dbus: %{!?_without_dbus: %define _with_dbus --with-dbus}}
 %{?_with_dbus: %define _dbus --enable-dbus}
@@ -101,7 +102,7 @@ Requires: %{name} = %{epoch}:%{version} xinetd
 
 %description
 CUPS is the standards-based, open source printing system developed by
-Apple Inc. for OS X and other UNIX®-like operating systems.
+Apple Inc. for macOS® and other UNIX®-like operating systems.
 
 %description devel
 This package provides the CUPS headers and development environment.
@@ -167,7 +168,6 @@ rm -rf $RPM_BUILD_ROOT
 /etc/cups/cups-files.conf.default
 /etc/cups/cupsd.conf.default
 /etc/cups/snmp.conf.default
-%dir /etc/cups/interfaces
 %dir /etc/cups/ppd
 %attr(0700,root,root) %dir /etc/cups/ssl
 
@@ -313,6 +313,7 @@ rm -rf $RPM_BUILD_ROOT
 /usr/share/man/man1/lpstat.1.gz
 %dir /usr/share/man/man5
 /usr/share/man/man5/*.conf.5.gz
+/usr/share/man/man5/cupsd-logs.5.gz
 /usr/share/man/man5/ipptoolfile.5.gz
 /usr/share/man/man5/mime.*.5.gz
 %dir /usr/share/man/man8
@@ -327,7 +328,6 @@ rm -rf $RPM_BUILD_ROOT
 /usr/share/man/man8/cupsfilter.8.gz
 /usr/share/man/man8/cupsd.8.gz
 /usr/share/man/man8/cupsd-helper.8.gz
-/usr/share/man/man8/cupsd-logs.8.gz
 /usr/share/man/man8/cupsdisable.8.gz
 /usr/share/man/man8/cupsenable.8.gz
 /usr/share/man/man8/cupsreject.8.gz
@@ -401,5 +401,5 @@ rm -rf $RPM_BUILD_ROOT
 
 
 #
-# End of "$Id: cups.spec.in 12715 2015-06-08 21:15:45Z msweet $".
+# End of "$Id: cups.spec.in 13178 2016-06-30 20:20:43Z msweet $".
 #

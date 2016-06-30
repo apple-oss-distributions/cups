@@ -1,6 +1,4 @@
 /*
- * "$Id: dnssd.c 12827 2015-07-31 15:21:37Z msweet $"
- *
  * DNS-SD discovery backend for CUPS.
  *
  * Copyright 2008-2015 by Apple Inc.
@@ -921,13 +919,6 @@ get_device(cups_array_t *devices,	/* I - Device array */
   * Yes, add the device...
   */
 
-#ifdef HAVE_DNSSD
-  DNSServiceConstructFullName(fullName, serviceName, regtype, replyDomain);
-#else /* HAVE_AVAHI */
-  avahi_service_name_join(fullName, kDNSServiceMaxDomainName,
-			   serviceName, regtype, replyDomain);
-#endif /* HAVE_DNSSD */
-
   device           = calloc(sizeof(cups_device_t), 1);
   device->name     = strdup(serviceName);
   device->domain   = strdup(replyDomain);
@@ -943,8 +934,7 @@ get_device(cups_array_t *devices,	/* I - Device array */
 #ifdef HAVE_DNSSD
   DNSServiceConstructFullName(fullName, serviceName, regtype, replyDomain);
 #else /* HAVE_AVAHI */
-  avahi_service_name_join(fullName, kDNSServiceMaxDomainName,
-			   serviceName, regtype, replyDomain);
+  avahi_service_name_join(fullName, kDNSServiceMaxDomainName, serviceName, regtype, replyDomain);
 #endif /* HAVE_DNSSD */
 
   device->fullName = strdup(fullName);
@@ -1050,9 +1040,7 @@ query_callback(
                   "interfaceIndex=%d, errorCode=%d, fullName=\"%s\", "
 		  "rrtype=%u, rrclass=%u, rdlen=%u, rdata=%p, ttl=%u, "
 		  "context=%p)\n",
-          sdRef, flags, interfaceIndex, errorCode,
-	  fullName ? fullName : "(null)", rrtype, rrclass, rdlen, rdata, ttl,
-	  context);
+          sdRef, flags, interfaceIndex, errorCode, fullName, rrtype, rrclass, rdlen, rdata, ttl, context);
 
  /*
   * Only process "add" data...
@@ -1065,9 +1053,7 @@ query_callback(
   fprintf(stderr, "DEBUG2: query_callback(browser=%p, interfaceIndex=%d, "
                   "protocol=%d, event=%d, fullName=\"%s\", rrclass=%u, "
 		  "rrtype=%u, rdata=%p, rdlen=%u, flags=%x, context=%p)\n",
-          browser, interfaceIndex, protocol, event,
-	  fullName ? fullName : "(null)", rrclass, rrtype, rdata,
-	  (unsigned)rdlen, flags, context);
+          browser, interfaceIndex, protocol, event, fullName, rrclass, rrtype, rdata, (unsigned)rdlen, flags, context);
 
  /*
   * Only process "add" data...
@@ -1202,9 +1188,9 @@ query_callback(
       snprintf(device_id, sizeof(device_id), "MFG:%s;MDL:%s;",
 	       make_and_model, model);
     else if (!_cups_strncasecmp(model, "designjet ", 10))
-      snprintf(device_id, sizeof(device_id), "MFG:HP;MDL:%s", model + 10);
+      snprintf(device_id, sizeof(device_id), "MFG:HP;MDL:%s;", model + 10);
     else if (!_cups_strncasecmp(model, "stylus ", 7))
-      snprintf(device_id, sizeof(device_id), "MFG:EPSON;MDL:%s", model + 7);
+      snprintf(device_id, sizeof(device_id), "MFG:EPSON;MDL:%s;", model + 7);
     else if ((ptr = strchr(model, ' ')) != NULL)
     {
      /*
@@ -1214,7 +1200,7 @@ query_callback(
       memcpy(make_and_model, model, (size_t)(ptr - model));
       make_and_model[ptr - model] = '\0';
 
-      snprintf(device_id, sizeof(device_id), "MFG:%s;MDL:%s",
+      snprintf(device_id, sizeof(device_id), "MFG:%s;MDL:%s;",
 	       make_and_model, ptr + 1);
     }
   }
@@ -1327,8 +1313,3 @@ unquote(char       *dst,		/* I - Destination buffer */
 
   *dst = '\0';
 }
-
-
-/*
- * End of "$Id: dnssd.c 12827 2015-07-31 15:21:37Z msweet $".
- */

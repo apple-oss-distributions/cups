@@ -1,9 +1,7 @@
 /*
- * "$Id: rastertopwg.c 12626 2015-05-07 00:39:18Z msweet $"
- *
  * CUPS raster to PWG raster format filter for CUPS.
  *
- * Copyright 2011, 2014-2015 Apple Inc.
+ * Copyright 2011, 2014-2016 Apple Inc.
  *
  * These coded instructions, statements, and computer programs are the
  * property of Apple Inc. and are protected by Federal copyright law.
@@ -19,6 +17,7 @@
  */
 
 #include <cups/cups-private.h>
+#include <cups/ppd-private.h>
 #include <cups/raster.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -51,8 +50,8 @@ main(int  argc,				/* I - Number of command-line args */
   ppd_file_t		*ppd;		/* PPD file */
   ppd_attr_t		*back;		/* cupsBackSize attribute */
   _ppd_cache_t		*cache;		/* PPD cache */
-  _pwg_size_t		*pwg_size;	/* PWG media size */
-  _pwg_media_t		*pwg_media;	/* PWG media name */
+  pwg_size_t		*pwg_size;	/* PWG media size */
+  pwg_media_t		*pwg_media;	/* PWG media name */
   int	 		num_options;	/* Number of options */
   cups_option_t		*options = NULL;/* Options */
   const char		*val;		/* Option value */
@@ -90,6 +89,29 @@ main(int  argc,				/* I - Number of command-line args */
   while (cupsRasterReadHeader2(inras, &inheader))
   {
    /*
+    * Show page device dictionary...
+    */
+
+    fprintf(stderr, "DEBUG: Duplex = %d\n", inheader.Duplex);
+    fprintf(stderr, "DEBUG: HWResolution = [ %d %d ]\n", inheader.HWResolution[0], inheader.HWResolution[1]);
+    fprintf(stderr, "DEBUG: ImagingBoundingBox = [ %d %d %d %d ]\n", inheader.ImagingBoundingBox[0], inheader.ImagingBoundingBox[1], inheader.ImagingBoundingBox[2], inheader.ImagingBoundingBox[3]);
+    fprintf(stderr, "DEBUG: Margins = [ %d %d ]\n", inheader.Margins[0], inheader.Margins[1]);
+    fprintf(stderr, "DEBUG: ManualFeed = %d\n", inheader.ManualFeed);
+    fprintf(stderr, "DEBUG: MediaPosition = %d\n", inheader.MediaPosition);
+    fprintf(stderr, "DEBUG: NumCopies = %d\n", inheader.NumCopies);
+    fprintf(stderr, "DEBUG: Orientation = %d\n", inheader.Orientation);
+    fprintf(stderr, "DEBUG: PageSize = [ %d %d ]\n", inheader.PageSize[0], inheader.PageSize[1]);
+    fprintf(stderr, "DEBUG: cupsWidth = %d\n", inheader.cupsWidth);
+    fprintf(stderr, "DEBUG: cupsHeight = %d\n", inheader.cupsHeight);
+    fprintf(stderr, "DEBUG: cupsMediaType = %d\n", inheader.cupsMediaType);
+    fprintf(stderr, "DEBUG: cupsBitsPerColor = %d\n", inheader.cupsBitsPerColor);
+    fprintf(stderr, "DEBUG: cupsBitsPerPixel = %d\n", inheader.cupsBitsPerPixel);
+    fprintf(stderr, "DEBUG: cupsBytesPerLine = %d\n", inheader.cupsBytesPerLine);
+    fprintf(stderr, "DEBUG: cupsColorOrder = %d\n", inheader.cupsColorOrder);
+    fprintf(stderr, "DEBUG: cupsColorSpace = %d\n", inheader.cupsColorSpace);
+    fprintf(stderr, "DEBUG: cupsCompression = %d\n", inheader.cupsCompression);
+
+   /*
     * Compute the real raster size...
     */
 
@@ -104,6 +126,13 @@ main(int  argc,				/* I - Number of command-line args */
     page_top    = page_height - page_bottom - inheader.cupsHeight;
     linesize    = (page_width * inheader.cupsBitsPerPixel + 7) / 8;
     lineoffset  = page_left * inheader.cupsBitsPerPixel / 8; /* Round down */
+
+    if (page_left > page_width || page_top > page_height || page_bottom > page_height)
+    {
+      _cupsLangPrintFilter(stderr, "ERROR", _("Unsupported raster data."));
+      fprintf(stderr, "DEBUG: Bad bottom/left/top margin on page %d.\n", page);
+      return (1);
+    }
 
     switch (inheader.cupsColorSpace)
     {
@@ -184,7 +213,7 @@ main(int  argc,				/* I - Number of command-line args */
                 sizeof(outheader.OutputType));
       else
       {
-        fprintf(stderr, "DEBUG: Unsupported print-content-type \"%s\".\n", val);
+        fputs("DEBUG: Unsupported print-content-optimize value.\n", stderr);
         outheader.OutputType[0] = '\0';
       }
     }
@@ -225,8 +254,7 @@ main(int  argc,				/* I - Number of command-line args */
                 sizeof(outheader.cupsRenderingIntent));
       else
       {
-        fprintf(stderr, "DEBUG: Unsupported print-rendering-intent \"%s\".\n",
-                val);
+        fputs("DEBUG: Unsupported print-rendering-intent value.\n", stderr);
         outheader.cupsRenderingIntent[0] = '\0';
       }
     }
@@ -239,10 +267,8 @@ main(int  argc,				/* I - Number of command-line args */
     }
     else
     {
-      pwg_media = _pwgMediaForSize((int)(2540.0 * inheader.cupsPageSize[0] /
-                                         72.0),
-                                   (int)(2540.0 * inheader.cupsPageSize[1] /
-                                         72.0));
+      pwg_media = pwgMediaForSize((int)(2540.0 * inheader.cupsPageSize[0] / 72.0),
+				  (int)(2540.0 * inheader.cupsPageSize[1] / 72.0));
 
       if (pwg_media)
         strlcpy(outheader.cupsPageSizeName, pwg_media->pwg,
@@ -360,7 +386,7 @@ main(int  argc,				/* I - Number of command-line args */
         * Unsupported value...
         */
 
-        fprintf(stderr, "DEBUG: Unsupported cupsBackSide \"%s\".\n", back->value);
+        fputs("DEBUG: Unsupported cupsBackSide value.\n", stderr);
 
 	outheader.cupsInteger[1] = 1;	/* CrossFeedTransform */
 	outheader.cupsInteger[2] = 1;	/* FeedTransform */
@@ -456,8 +482,3 @@ main(int  argc,				/* I - Number of command-line args */
 
   return (0);
 }
-
-
-/*
- * End of "$Id: rastertopwg.c 12626 2015-05-07 00:39:18Z msweet $".
- */

@@ -1,9 +1,7 @@
 /*
- * "$Id: ipp.c 12764 2015-06-24 20:13:22Z msweet $"
- *
  * IPP backend for CUPS.
  *
- * Copyright 2007-2015 by Apple Inc.
+ * Copyright 2007-2016 by Apple Inc.
  * Copyright 1997-2007 by Easy Software Products, all rights reserved.
  *
  * These coded instructions, statements, and computer programs are the
@@ -20,6 +18,7 @@
  */
 
 #include "backend-private.h"
+#include <cups/ppd-private.h>
 #include <cups/array-private.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -108,6 +107,7 @@ static const char * const pattrs[] =	/* Printer attributes we want */
   "copies-supported",
   "cups-version",
   "document-format-supported",
+  "job-password-encryption-supported",
   "marker-colors",
   "marker-high-levels",
   "marker-levels",
@@ -236,9 +236,10 @@ main(int  argc,				/* I - Number of command-line args */
   int		delay,			/* Delay for retries */
 		prev_delay;		/* Previous delay */
   const char	*compression;		/* Compression mode */
-  int		waitjob,		/* Wait for job complete? */
+  int		waitjob,			/* Wait for job complete? */
 		waitjob_tries = 0,	/* Number of times we've waited */
 		waitprinter;		/* Wait for printer ready? */
+  time_t	waittime;		/* Wait time for held jobs */
   _cups_monitor_t monitor;		/* Monitoring data */
   ipp_attribute_t *job_id_attr;		/* job-id attribute */
   int		job_id;			/* job-id value */
@@ -249,6 +250,7 @@ main(int  argc,				/* I - Number of command-line args */
 #endif /* HAVE_LIBZ */
   ipp_attribute_t *copies_sup;		/* copies-supported */
   ipp_attribute_t *cups_version;	/* cups-version */
+  ipp_attribute_t *encryption_sup;	/* job-password-encryption-supported */
   ipp_attribute_t *format_sup;		/* document-format-supported */
   ipp_attribute_t *job_auth;		/* job-authorization-uri */
   ipp_attribute_t *media_col_sup;	/* media-col-supported */
@@ -880,6 +882,7 @@ main(int  argc,				/* I - Number of command-line args */
 #endif /* HAVE_LIBZ */
   copies_sup           = NULL;
   cups_version         = NULL;
+  encryption_sup       = NULL;
   format_sup           = NULL;
   media_col_sup        = NULL;
   supported            = NULL;
@@ -1093,7 +1096,7 @@ main(int  argc,				/* I - Number of command-line args */
                         "compression value \"%s\".\n", compression);
         compression = NULL;
       }
-      else if (!compression)
+      else if (!compression && (!strcmp(final_content_type, "image/pwg-raster") || !strcmp(final_content_type, "image/urf")))
       {
         if (ippContainsString(compression_sup, "gzip"))
           compression = "gzip";
@@ -1124,6 +1127,8 @@ main(int  argc,				/* I - Number of command-line args */
     }
 
     cups_version = ippFindAttribute(supported, "cups-version", IPP_TAG_TEXT);
+
+    encryption_sup = ippFindAttribute(supported, "job-password-encryption-supported", IPP_TAG_KEYWORD);
 
     if ((format_sup = ippFindAttribute(supported, "document-format-supported",
 	                               IPP_TAG_MIMETYPE)) != NULL)
@@ -1309,6 +1314,41 @@ main(int  argc,				/* I - Number of command-line args */
       if ((mandatory = ppdFindAttr(ppd, "cupsMandatory", NULL)) != NULL)
         strlcpy(mandatory_attrs, mandatory->value, sizeof(mandatory_attrs));
     }
+
+   /*
+    * Validate job-password/-encryption...
+    */
+
+    if (cupsGetOption("job-password", num_options, options))
+    {
+      const char *keyword;		/* job-password-encryption value */
+      static const char * const hashes[] =
+      {					/* List of supported hash algorithms, in order of preference */
+        "sha-512",
+        "sha-384",
+        "sha-512_256",
+        "sha-512-224",
+        "sha-256",
+        "sha-224",
+        "sha",
+        "none"
+      };
+
+      if ((keyword = cupsGetOption("job-password-encryption", num_options, options)) == NULL || !ippContainsString(encryption_sup, keyword))
+      {
+       /*
+        * Either no job-password-encryption or the value isn't supported by
+        * the printer...
+        */
+
+        for (i = 0; i < (int)(sizeof(hashes) / sizeof(hashes[0])); i ++)
+          if (ippContainsString(encryption_sup, hashes[i]))
+            break;
+
+        if (i < (int)(sizeof(hashes) / sizeof(hashes[0])))
+          num_options = cupsAddOption("job-password-encryption", hashes[i], num_options, &options);
+      }
+    }
   }
   else
     num_options = 0;
@@ -1317,24 +1357,10 @@ main(int  argc,				/* I - Number of command-line args */
 
   if (format_sup != NULL)
   {
-    for (i = 0; i < format_sup->num_values; i ++)
-      if (!_cups_strcasecmp(final_content_type,
-                            format_sup->values[i].string.text))
-      {
-        document_format = final_content_type;
-	break;
-      }
-
-    if (!document_format)
-    {
-      for (i = 0; i < format_sup->num_values; i ++)
-	if (!_cups_strcasecmp("application/octet-stream",
-	                      format_sup->values[i].string.text))
-	{
-	  document_format = "application/octet-stream";
-	  break;
-	}
-    }
+    if (ippContainsString(format_sup, final_content_type))
+      document_format = final_content_type;
+    else if (ippContainsString(format_sup, "application/octet-stream"))
+      document_format = "application/octet-stream";
   }
 
   fprintf(stderr, "DEBUG: final_content_type=\"%s\", document_format=\"%s\"\n",
@@ -1800,7 +1826,7 @@ main(int  argc,				/* I - Number of command-line args */
 	fprintf(stderr, "DEBUG: Send-Document: %s (%s)\n",
 		ippErrorString(cupsLastError()), cupsLastErrorString());
 
-	if (cupsLastError() > IPP_OK_CONFLICT)
+	if (cupsLastError() > IPP_OK_CONFLICT && !job_canceled)
 	{
 	  ipp_status = cupsLastError();
 
@@ -1817,6 +1843,9 @@ main(int  argc,				/* I - Number of command-line args */
 	}
       }
     }
+
+    if (job_canceled)
+      break;
 
     if (ipp_status <= IPP_OK_CONFLICT && argc > 6)
     {
@@ -1924,7 +1953,7 @@ main(int  argc,				/* I - Number of command-line args */
 
     _cupsLangPrintFilter(stderr, "INFO", _("Waiting for job to complete."));
 
-    for (delay = _cupsNextDelay(0, &prev_delay); !job_canceled;)
+    for (delay = _cupsNextDelay(0, &prev_delay), waittime = time(NULL) + 30; !job_canceled;)
     {
      /*
       * Check for side-channel requests...
@@ -2035,10 +2064,11 @@ main(int  argc,				/* I - Number of command-line args */
 		    job_sheets->values[0].integer);
 
 	 /*
-          * Stop polling if the job is finished or pending-held...
+          * Stop polling if the job is finished or pending-held for 30 seconds...
 	  */
 
-          if (job_state->values[0].integer > IPP_JOB_STOPPED)
+          if (job_state->values[0].integer > IPP_JSTATE_STOPPED ||
+	      (job_state->values[0].integer == IPP_JSTATE_HELD && time(NULL) > waittime))
 	  {
 	    ippDelete(response);
 	    break;
@@ -2444,6 +2474,17 @@ monitor_printer(
         }
       }
 
+      fprintf(stderr, "DEBUG: (monitor) job-state = %s\n",
+              ippEnumString("job-state", monitor->job_state));
+
+      if (!job_canceled &&
+          (monitor->job_state == IPP_JOB_CANCELED ||
+	   monitor->job_state == IPP_JOB_ABORTED))
+      {
+	job_canceled = -1;
+	fprintf(stderr, "DEBUG: (monitor) job_canceled = -1\n");
+      }
+
       if ((attr = ippFindAttribute(response, "job-state-reasons",
                                    IPP_TAG_KEYWORD)) != NULL)
       {
@@ -2465,7 +2506,8 @@ monitor_printer(
             new_reasons |= _CUPS_JSR_JOB_PASSWORD_WAIT;
           else if (!strcmp(attr->values[i].string.text, "job-release-wait"))
             new_reasons |= _CUPS_JSR_JOB_RELEASE_WAIT;
-          else if (!strncmp(attr->values[i].string.text, "job-canceled-", 13) || !strcmp(attr->values[i].string.text, "aborted-by-system"))
+	  if (!job_canceled &&
+	      (!strncmp(attr->values[i].string.text, "job-canceled-", 13) || !strcmp(attr->values[i].string.text, "aborted-by-system")))
             job_canceled = 1;
         }
 
@@ -2492,7 +2534,7 @@ monitor_printer(
 
       ippDelete(response);
 
-      fprintf(stderr, "DEBUG: (monitor) job-state=%s\n",
+      fprintf(stderr, "DEBUG: (monitor) job-state = %s\n",
               ippEnumString("job-state", monitor->job_state));
 
       if (!job_canceled &&
@@ -2530,7 +2572,10 @@ monitor_printer(
                  monitor->user, monitor->version);
 
       if (cupsLastError() > IPP_OK_CONFLICT)
+      {
+	fprintf(stderr, "DEBUG: (monitor) cancel_job() = %s\n", cupsLastErrorString());
 	_cupsLangPrintFilter(stderr, "ERROR", _("Unable to cancel print job."));
+      }
     }
   }
 
@@ -3258,7 +3303,7 @@ sigterm_handler(int sig)		/* I - Signal */
     * Flag that the job should be canceled...
     */
 
-    write(2, "DEBUG: job_canceled = 1.\n", 25);
+    write(2, "DEBUG: sigterm_handler: job_canceled = 1.\n", 25);
 
     job_canceled = 1;
     return;
@@ -3482,7 +3527,3 @@ update_reasons(ipp_attribute_t *attr,	/* I - printer-state-reasons or NULL */
   else if (rem[0])
     fprintf(stderr, "%s\n", rem);
 }
-
-/*
- * End of "$Id: ipp.c 12764 2015-06-24 20:13:22Z msweet $".
- */

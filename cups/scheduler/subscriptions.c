@@ -1,6 +1,4 @@
 /*
- * "$Id: subscriptions.c 11560 2014-02-06 20:10:19Z msweet $"
- *
  * Subscription routines for the CUPS scheduler.
  *
  * Copyright 2007-2014 by Apple Inc.
@@ -105,9 +103,7 @@ cupsdAddEvent(
     * Check if this subscription requires this event...
     */
 
-    if ((sub->mask & event) != 0 &&
-        (sub->dest == dest || !sub->dest) &&
-	(sub->job == job || !sub->job))
+    if ((sub->mask & event) != 0 && (sub->dest == dest || !sub->dest || sub->job == job))
     {
      /*
       * Need this event, so create a new event record...
@@ -658,6 +654,8 @@ cupsdExpireSubscriptions(
 
   curtime = time(NULL);
   update  = 0;
+
+  cupsdLogMessage(CUPSD_LOG_INFO, "Expiring subscriptions...");
 
   for (sub = (cupsd_subscription_t *)cupsArrayFirst(Subscriptions);
        sub;
@@ -1614,8 +1612,3 @@ cupsd_update_notifier(void)
       break;
   }
 }
-
-
-/*
- * End of "$Id: subscriptions.c 11560 2014-02-06 20:10:19Z msweet $".
- */

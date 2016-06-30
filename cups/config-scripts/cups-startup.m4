@@ -1,9 +1,7 @@
 dnl
-dnl "$Id: cups-startup.m4 12827 2015-07-31 15:21:37Z msweet $"
-dnl
 dnl Launch-on-demand/startup stuff for CUPS.
 dnl
-dnl Copyright 2007-2015 by Apple Inc.
+dnl Copyright 2007-2016 by Apple Inc.
 dnl Copyright 1997-2005 by Easy Software Products, all rights reserved.
 dnl
 dnl These coded instructions, statements, and computer programs are the
@@ -18,23 +16,20 @@ ONDEMANDLIBS=""
 AC_SUBST(ONDEMANDFLAGS)
 AC_SUBST(ONDEMANDLIBS)
 
-dnl Launchd is used on OS X/Darwin...
+dnl Launchd is used on macOS/Darwin...
 AC_ARG_ENABLE(launchd, [  --disable-launchd       disable launchd support])
 LAUNCHD_DIR=""
 AC_SUBST(LAUNCHD_DIR)
 
 if test x$enable_launchd != xno; then
-	AC_CHECK_FUNC(launch_msg, AC_DEFINE(HAVE_LAUNCHD))
-	if test $uversion -ge 140; then
-		AC_CHECK_FUNC(launch_activate_socket, [
-			AC_DEFINE(HAVE_LAUNCHD)
-			AC_DEFINE(HAVE_LAUNCH_ACTIVATE_SOCKET)])
-	fi
+	AC_CHECK_FUNC(launch_activate_socket, [
+		AC_DEFINE(HAVE_LAUNCHD)
+		AC_DEFINE(HAVE_ONDEMAND)])
 	AC_CHECK_HEADER(launch.h, AC_DEFINE(HAVE_LAUNCH_H))
 
 	case "$uname" in
 		Darwin*)
-			# Darwin, MacOS X
+			# Darwin, macOS
 			LAUNCHD_DIR="/System/Library/LaunchDaemons"
 			# liblaunch is already part of libSystem
 			;;
@@ -56,20 +51,46 @@ if test x$enable_systemd != xno; then
 	        	AC_MSG_ERROR(Need pkg-config to enable systemd support.)
                 fi
         else
+        	have_systemd=no
         	AC_MSG_CHECKING(for libsystemd)
                 if $PKGCONFIG --exists libsystemd; then
                         AC_MSG_RESULT(yes)
+                        have_systemd=yes
                         ONDEMANDFLAGS=`$PKGCONFIG --cflags libsystemd`
                         ONDEMANDLIBS=`$PKGCONFIG --libs libsystemd`
+		elif $PKGCONFIG --exists libsystemd-daemon; then
+			AC_MSG_RESULT(yes - legacy)
+                        have_systemd=yes
+			ONDEMANDFLAGS=`$PKGCONFIG --cflags libsystemd-daemon`
+			ONDEMANDLIBS=`$PKGCONFIG --libs libsystemd-daemon`
+
+			if $PKGCONFIG --exists libsystemd-journal; then
+				ONDEMANDFLAGS="$ONDEMANDFLAGS `$PKGCONFIG --cflags libsystemd-journal`"
+				ONDEMANDLIBS="$ONDEMANDLIBS `$PKGCONFIG --libs libsystemd-journal`"
+			fi
+                else
+                        AC_MSG_RESULT(no)
+                fi
+
+		if test $have_systemd = yes; then
                         AC_DEFINE(HAVE_SYSTEMD)
+                        AC_DEFINE(HAVE_ONDEMAND)
 			AC_CHECK_HEADER(systemd/sd-journal.h,AC_DEFINE(HAVE_SYSTEMD_SD_JOURNAL_H))
 			if test "x$SYSTEMD_DIR" = x; then
 			        SYSTEMD_DIR="`$PKGCONFIG --variable=systemdsystemunitdir systemd`"
                         fi
-                else
-                        AC_MSG_RESULT(no)
                 fi
         fi
+fi
+
+dnl Upstart is also used on Linux (e.g., Chrome OS)
+AC_ARG_ENABLE(upstart, [ --enable-upstart         enable upstart support])
+if test "x$enable_upstart" = "xyes"; then
+	if test "x$have_systemd" = "xyes"; then
+		AC_MSG_ERROR(Cannot support both systemd and upstart.)
+	fi
+	AC_DEFINE(HAVE_UPSTART)
+	AC_DEFINE(HAVE_ONDEMAND)
 fi
 
 dnl Solaris uses smf
@@ -170,8 +191,3 @@ if test "x$xinetd" = x; then
 elif test "x$xinetd" != xno; then
 	XINETD="$xinetd"
 fi
-
-
-dnl
-dnl End of "$Id: cups-startup.m4 12827 2015-07-31 15:21:37Z msweet $".
-dnl
