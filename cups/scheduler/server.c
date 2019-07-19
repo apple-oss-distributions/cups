@@ -1,14 +1,10 @@
 /*
  * Server start/stop routines for the CUPS scheduler.
  *
- * Copyright 2007-2012 by Apple Inc.
+ * Copyright 2007-2019 by Apple Inc.
  * Copyright 1997-2006 by Easy Software Products, all rights reserved.
  *
- * These coded instructions, statements, and computer programs are the
- * property of Apple Inc. and are protected by Federal copyright
- * law.  Distribution and use rights are outlined in the file "LICENSE.txt"
- * which should have been included with this file.  If this file is
- * missing or damaged, see the license at "http://www.cups.org/".
+ * Licensed under Apache License v2.0.  See the file "LICENSE" for more information.
  */
 
 /*
@@ -38,16 +34,28 @@ void
 cupsdStartServer(void)
 {
  /*
-  * Start color management (as needed)...
-  */
-
-  cupsdStartColor();
-
- /*
   * Create the default security profile...
   */
 
   DefaultProfile = cupsdCreateProfile(0, 1);
+
+#ifdef HAVE_SANDBOX_H
+  if (!DefaultProfile && UseSandboxing && Sandboxing != CUPSD_SANDBOXING_OFF)
+  {
+   /*
+    * Failure to create the sandbox profile means something really bad has
+    * happened and we need to shutdown immediately.
+    */
+
+    return;
+  }
+#endif /* HAVE_SANDBOX_H */
+
+ /*
+  * Start color management (as needed)...
+  */
+
+  cupsdStartColor();
 
  /*
   * Startup all the networking stuff...
@@ -78,7 +86,7 @@ cupsdStartServer(void)
               CUPSD_EVENT_SERVER_STARTED;
   started   = 1;
 
-  cupsdSetBusyState();
+  cupsdSetBusyState(0);
 }
 
 
@@ -163,6 +171,15 @@ cupsdStopServer(void)
 
   cupsdDestroyProfile(DefaultProfile);
   DefaultProfile = NULL;
+
+ /*
+  * Expire subscriptions and clean out old jobs...
+  */
+
+  cupsdExpireSubscriptions(NULL, NULL);
+
+  if (JobHistoryUpdate)
+    cupsdCleanJobs();
 
  /*
   * Write out any dirty files...

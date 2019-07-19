@@ -1,14 +1,11 @@
 /*
  * Adobe standard media size definitions for the CUPS PPD file compiler.
  *
- * Copyright 2007-2016 by Apple Inc.
- * Copyright 1997-2005 by Easy Software Products.
+ * Copyright © 2007-2016 by Apple Inc.
+ * Copyright © 1997-2005 by Easy Software Products.
  *
- * These codedinstructions, statements, and computer programs are the
- * property of Apple Inc. and are protected by Federal copyright
- * copyright law.  Distribution and use rights are outlinedin the file
- * "LICENSE.txt" which should have beenincluded with this file.  If this
- * file is missing or damaged, see the license at "http://www.cups.org/".
+ * Licensed under Apache License v2.0.  See the file "LICENSE" for more
+ * information.
  */
 
 #media "3x5/3 x 5" 216 360
@@ -140,9 +137,9 @@
 #media "EnvYou4/Envelope You4" 298 666
 #media "EnvYou4Rotated/Envelope You4 Long Edge" 666 298
 #media "Executive/Executive" 522 756
-#media "FanFoldGerman/FanFold German" 612 864
-#media "FanFoldGermanLegal/FanFold Legal German" 612 936
-#media "FanFoldUS/Fanfold US" 1071 792
+#media "FanFoldGerman/European Fanfold" 612 864
+#media "FanFoldGermanLegal/European Fanfold Legal" 612 936
+#media "FanFoldUS/US Fanfold" 1071 792
 #media "Folio/Folio" 595 935
 #media "ISOB0/B0" 2835 4008
 #media "ISOB1/B1" 2004 2835

@@ -1,14 +1,11 @@
 //
 // Source class for the CUPS PPD Compiler.
 //
-// Copyright 2007-2014 by Apple Inc.
+// Copyright 2007-2018 by Apple Inc.
 // Copyright 2002-2007 by Easy Software Products.
 //
-// These coded instructions, statements, and computer programs are the
-// property of Apple Inc. and are protected by Federal copyright
-// law.  Distribution and use rights are outlined in the file "LICENSE.txt"
-// which should have been included with this file.  If this file is
-// missing or damaged, see the license at "http://www.cups.org/".
+// Licensed under Apache License v2.0.  See the file "LICENSE" for more
+// information.
 //
 
 //
@@ -23,9 +20,9 @@
 #include "data/epson.h"
 #include "data/hp.h"
 #include "data/label.h"
-#ifndef WIN32
+#ifndef _WIN32
 #  include <sys/utsname.h>
-#endif // !WIN32
+#endif // !_WIN32
 
 
 //
@@ -73,7 +70,7 @@ ppdcSource::ppdcSource(const char  *f,	// I - File to read
   vars->add(new ppdcVariable("CUPS_VERSION_MINOR", MAKE_STRING(CUPS_VERSION_MINOR)));
   vars->add(new ppdcVariable("CUPS_VERSION_PATCH", MAKE_STRING(CUPS_VERSION_PATCH)));
 
-#ifdef WIN32
+#ifdef _WIN32
   vars->add(new ppdcVariable("PLATFORM_NAME", "Windows"));
   vars->add(new ppdcVariable("PLATFORM_ARCH", "X86"));
 
@@ -90,7 +87,7 @@ ppdcSource::ppdcSource(const char  *f,	// I - File to read
     vars->add(new ppdcVariable("PLATFORM_NAME", "unknown"));
     vars->add(new ppdcVariable("PLATFORM_ARCH", "unknown"));
   }
-#endif // WIN32
+#endif // _WIN32
 
   if (f)
     read_file(f, ffp);
@@ -2669,6 +2666,7 @@ ppdcSource::scan_file(ppdcFile   *fp,	// I - File to read
       // Add it to the current option...
       if (!o)
       {
+        c->release();
         _cupsLangPrintf(stderr,
 	                _("ppdc: Choice found on line %d of %s with no "
 			  "Option."), fp->line, fp->filename);

@@ -4,11 +4,7 @@
  * Copyright 2007-2017 by Apple Inc.
  * Copyright 1997-2007 by Easy Software Products, all rights reserved.
  *
- * These coded instructions, statements, and computer programs are the
- * property of Apple Inc. and are protected by Federal copyright
- * law.  Distribution and use rights are outlined in the file "LICENSE.txt"
- * which should have been included with this file.  If this file is
- * missing or damaged, see the license at "http://www.cups.org/".
+ * Licensed under Apache License v2.0.  See the file "LICENSE" for more information.
  */
 
 /*
@@ -23,13 +19,16 @@
 #ifdef HAVE_POSIX_SPAWN
 #  include <spawn.h>
 extern char **environ;
-#endif /* HAVE_POSIX_SPAWN */
-#ifdef HAVE_POSIX_SPAWN
-#  if !defined(__OpenBSD__) || OpenBSD >= 201505
-#    define USE_POSIX_SPAWN 1
-#  else
+/* Don't use posix_spawn on systems with bugs in their implementations... */
+#  if defined(OpenBSD) && OpenBSD < 201505
 #    define USE_POSIX_SPAWN 0
-#  endif /* !__OpenBSD__ || */
+#  elif defined(__UCLIBC__) && __UCLIBC_MAJOR__ == 1 && __UCLIBC_MINOR__ == 0 && __UCLIBC_SUBLEVEL__ < 27
+#    define USE_POSIX_SPAWN 0
+#  elif defined(__UCLIBC__) && __UCLIBC_MAJOR__ < 1
+#    define USE_POSIX_SPAWN 0
+#  else /* All other platforms */
+#    define USE_POSIX_SPAWN 1
+#  endif /* ... */
 #else
 #  define USE_POSIX_SPAWN 0
 #endif /* HAVE_POSIX_SPAWN */
@@ -99,9 +98,13 @@ cupsdCreateProfile(int job_id,		/* I - Job ID or 0 for none */
 
   if ((fp = cupsTempFile2(profile, sizeof(profile))) == NULL)
   {
+   /*
+    * This should never happen, and is fatal when sandboxing is enabled.
+    */
+
     cupsdLogMessage(CUPSD_LOG_DEBUG2, "cupsdCreateProfile(job_id=%d, allow_networking=%d) = NULL", job_id, allow_networking);
-    cupsdLogMessage(CUPSD_LOG_ERROR, "Unable to create security profile: %s",
-                    strerror(errno));
+    cupsdLogMessage(CUPSD_LOG_EMERG, "Unable to create security profile: %s", strerror(errno));
+    kill(getpid(), SIGTERM);
     return (NULL);
   }
 
@@ -198,10 +201,8 @@ cupsdCreateProfile(int job_id,		/* I - Job ID or 0 for none */
 		 " #\"^%s/\""		/* TempDir/... */
 		 " #\"^%s$\""		/* CacheDir */
 		 " #\"^%s/\""		/* CacheDir/... */
-		 " #\"^%s$\""		/* StateDir */
-		 " #\"^%s/\""		/* StateDir/... */
 		 "))\n",
-		 temp, temp, cache, cache, state, state);
+		 temp, temp, cache, cache);
   /* Read common folders */
   cupsFilePrintf(fp,
                  "(allow file-read-data file-read-metadata\n"
@@ -243,8 +244,10 @@ cupsdCreateProfile(int job_id,		/* I - Job ID or 0 for none */
 		 " #\"^%s/\""		/* ServerBin/... */
 		 " #\"^%s$\""		/* ServerRoot */
 		 " #\"^%s/\""		/* ServerRoot/... */
+		 " #\"^%s$\""		/* StateDir */
+		 " #\"^%s/\""		/* StateDir/... */
 		 "))\n",
-		 request, request, bin, bin, root, root);
+		 request, request, bin, bin, root, root, state, state);
   if (Sandboxing == CUPSD_SANDBOXING_RELAXED)
   {
     /* Limited write access to /Library/Printers/... */

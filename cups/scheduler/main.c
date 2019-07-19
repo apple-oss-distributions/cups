@@ -1,14 +1,11 @@
 /*
  * Main loop for the CUPS scheduler.
  *
- * Copyright 2007-2017 by Apple Inc.
- * Copyright 1997-2007 by Easy Software Products, all rights reserved.
+ * Copyright © 2007-2019 by Apple Inc.
+ * Copyright © 1997-2007 by Easy Software Products, all rights reserved.
  *
- * These coded instructions, statements, and computer programs are the
- * property of Apple Inc. and are protected by Federal copyright
- * law.  Distribution and use rights are outlined in the file "LICENSE.txt"
- * "LICENSE" which should have been included with this file.  If this
- * file is missing or damaged, see the license at "http://www.cups.org/".
+ * Licensed under Apache License v2.0.  See the file "LICENSE" for more
+ * information.
  */
 
 /*
@@ -18,6 +15,10 @@
 #define _MAIN_C_
 #include "cupsd.h"
 #include <sys/resource.h>
+#ifdef __APPLE__
+#  include <xpc/xpc.h>
+#  include <pthread/qos.h>
+#endif /* __APPLE__ */
 #ifdef HAVE_ASL_H
 #  include <asl.h>
 #elif defined(HAVE_SYSTEMD_SD_JOURNAL_H)
@@ -38,7 +39,7 @@
 #ifdef HAVE_ONDEMAND
 #  define CUPS_KEEPALIVE CUPS_CACHEDIR "/org.cups.cupsd"
 					/* Name of the KeepAlive file */
-#endif
+#endif /* HAVE_ONDEMAND */
 
 #if defined(HAVE_MALLOC_H) && defined(HAVE_MALLINFO)
 #  include <malloc.h>
@@ -67,11 +68,9 @@ static void		sigchld_handler(int sig);
 static void		sighup_handler(int sig);
 static void		sigterm_handler(int sig);
 static long		select_timeout(int fds);
-#ifdef HAVE_ONDEMAND
 static void		service_checkin(void);
-static void		service_checkout(void);
-#endif /* HAVE_ONDEMAND */
-static void		usage(int status) __attribute__((noreturn));
+static void		service_checkout(int shutdown);
+static void		usage(int status) _CUPS_NORETURN;
 
 
 /*
@@ -130,7 +129,7 @@ main(int  argc,				/* I - Number of command-line args */
   time_t		netif_time = 0;	/* Time since last network update */
 #endif /* __APPLE__ */
 #if defined(HAVE_ONDEMAND)
-  int			service_idle_exit;
+  int			service_idle_exit = 0;
 					/* Idle exit on select timeout? */
 #endif /* HAVE_ONDEMAND */
 
@@ -153,19 +152,14 @@ main(int  argc,				/* I - Number of command-line args */
 
   fg = 0;
 
-#ifdef HAVE_LAUNCHD
-  if (getenv("CUPSD_LAUNCHD"))
-  {
-    OnDemand   = 1;
-    fg         = 1;
-    close_all  = 0;
-    disconnect = 0;
-  }
-#endif /* HAVE_LAUNCHD */
-
   for (i = 1; i < argc; i ++)
-    if (argv[i][0] == '-')
+  {
+    if (!strcmp(argv[i], "--help"))
+      usage(0);
+    else if (argv[i][0] == '-')
+    {
       for (opt = argv[i] + 1; *opt != '\0'; opt ++)
+      {
         switch (*opt)
 	{
 	  case 'C' : /* Run as child with config file */
@@ -241,7 +235,7 @@ main(int  argc,				/* I - Number of command-line args */
 	      break;
 
           case 'l' : /* Started by launchd/systemd/upstart... */
-#if defined(HAVE_ONDEMAND)
+#ifdef HAVE_ONDEMAND
 	      OnDemand   = 1;
 	      fg         = 1;
 	      close_all  = 0;
@@ -320,12 +314,15 @@ main(int  argc,				/* I - Number of command-line args */
 	      usage(1);
 	      break;
 	}
+      }
+    }
     else
     {
       _cupsLangPrintf(stderr, _("cupsd: Unknown argument \"%s\" - aborting."),
                       argv[i]);
       usage(1);
     }
+  }
 
   if (!ConfigurationFile)
     cupsdSetString(&ConfigurationFile, CUPS_SERVERROOT "/cupsd.conf");
@@ -348,6 +345,7 @@ main(int  argc,				/* I - Number of command-line args */
     strlcpy(filename, ConfigurationFile, len);
     if ((slash = strrchr(filename, '/')) == NULL)
     {
+      free(filename);
       _cupsLangPrintf(stderr,
 		      _("cupsd: Unable to get path to "
 			"cups-files.conf file."));
@@ -498,6 +496,12 @@ main(int  argc,				/* I - Number of command-line args */
   }
 
  /*
+  * Let the system know we are busy while we bring up cupsd...
+  */
+
+  cupsdSetBusyState(1);
+
+ /*
   * Set the timezone info...
   */
 
@@ -582,18 +586,13 @@ main(int  argc,				/* I - Number of command-line args */
 
   cupsdCleanFiles(CacheDir, "*.ipp");
 
-#if defined(HAVE_ONDEMAND)
-  if (OnDemand)
-  {
-   /*
-    * If we were started on demand by launchd or systemd get the listen sockets
-    * file descriptors...
-    */
+ /*
+  * If we were started on demand by launchd or systemd get the listen sockets
+  * file descriptors...
+  */
 
-    service_checkin();
-    service_checkout();
-  }
-#endif /* HAVE_ONDEMAND */
+  service_checkin();
+  service_checkout(0);
 
  /*
   * Startup the server...
@@ -680,7 +679,7 @@ main(int  argc,				/* I - Number of command-line args */
   * Send server-started event...
   */
 
-#if defined(HAVE_ONDEMAND)
+#ifdef HAVE_ONDEMAND
   if (OnDemand)
     cupsdAddEvent(CUPSD_EVENT_SERVER_STARTED, NULL, NULL, "Scheduler started on demand.");
   else
@@ -689,6 +688,8 @@ main(int  argc,				/* I - Number of command-line args */
     cupsdAddEvent(CUPSD_EVENT_SERVER_STARTED, NULL, NULL, "Scheduler started in foreground.");
   else
     cupsdAddEvent(CUPSD_EVENT_SERVER_STARTED, NULL, NULL, "Scheduler started in background.");
+
+  cupsdSetBusyState(0);
 
  /*
   * Start any pending print jobs...
@@ -703,7 +704,7 @@ main(int  argc,				/* I - Number of command-line args */
   current_time  = time(NULL);
   event_time    = current_time;
   expire_time   = current_time;
-  local_timeout = current_time + 60;
+  local_timeout = 0;
   fds           = 1;
   report_time   = 0;
   senddoc_time  = current_time;
@@ -755,7 +756,10 @@ main(int  argc,				/* I - Number of command-line args */
 
 #ifdef HAVE_ONDEMAND
 	if (OnDemand)
+	{
+	  stop_scheduler = 1;
 	  break;
+	}
 #endif /* HAVE_ONDEMAND */
 
         DoingShutdown = 1;
@@ -808,20 +812,31 @@ main(int  argc,				/* I - Number of command-line args */
 
 #ifdef HAVE_ONDEMAND
    /*
-    * If no other work is scheduled and we're being controlled by
-    * launchd then timeout after 'LaunchdTimeout' seconds of
+    * If no other work is scheduled and we're being controlled by launchd,
+    * systemd, etc. then timeout after 'IdleExitTimeout' seconds of
     * inactivity...
     */
 
     if (timeout == 86400 && OnDemand && IdleExitTimeout &&
-        !cupsArrayCount(ActiveJobs) &&
 #  ifdef HAVE_SYSTEMD
         !WebInterface &&
 #  endif /* HAVE_SYSTEMD */
-	(!Browsing || !BrowseLocalProtocols || !cupsArrayCount(Printers)))
+        !cupsArrayCount(ActiveJobs))
     {
-      timeout		= IdleExitTimeout;
-      service_idle_exit = 1;
+      cupsd_printer_t *p = NULL;	/* Current printer */
+
+      if (Browsing && BrowseLocalProtocols)
+      {
+        for (p = (cupsd_printer_t *)cupsArrayFirst(Printers); p; p = (cupsd_printer_t *)cupsArrayNext(Printers))
+          if (p->shared)
+            break;
+      }
+
+      if (!p)
+      {
+	timeout		  = IdleExitTimeout;
+	service_idle_exit = 1;
+      }
     }
     else
       service_idle_exit = 0;
@@ -892,7 +907,7 @@ main(int  argc,				/* I - Number of command-line args */
     * Write dirty config/state files...
     */
 
-    if (DirtyCleanTime && current_time >= DirtyCleanTime && cupsArrayCount(Clients) == 0)
+    if (DirtyCleanTime && current_time >= DirtyCleanTime)
       cupsdCleanDirty();
 
 #ifdef __APPLE__
@@ -952,8 +967,7 @@ main(int  argc,				/* I - Number of command-line args */
 
     if (current_time > expire_time)
     {
-      if (cupsArrayCount(Subscriptions) > 0)
-        cupsdExpireSubscriptions(NULL, NULL);
+      cupsdExpireSubscriptions(NULL, NULL);
 
       cupsdUnloadCompletedJobs();
 
@@ -965,7 +979,10 @@ main(int  argc,				/* I - Number of command-line args */
     */
 
     if (current_time >= local_timeout)
+    {
       cupsdDeleteTemporaryPrinters(0);
+      local_timeout = 0;
+    }
 
 #ifndef HAVE_AUTHORIZATION_H
    /*
@@ -984,6 +1001,23 @@ main(int  argc,				/* I - Number of command-line args */
       cupsdAddCert(0, "root", cupsdDefaultAuthType());
     }
 #endif /* !HAVE_AUTHORIZATION_H */
+
+   /*
+    * Clean job history...
+    */
+
+    if (JobHistoryUpdate && current_time >= JobHistoryUpdate)
+      cupsdCleanJobs();
+
+   /*
+    * Update any pending multi-file documents...
+    */
+
+    if ((current_time - senddoc_time) >= 10)
+    {
+      cupsdCheckJobs();
+      senddoc_time = current_time;
+    }
 
    /*
     * Check for new data on the client sockets...
@@ -1016,23 +1050,6 @@ main(int  argc,				/* I - Number of command-line args */
         continue;
       }
     }
-
-   /*
-    * Update any pending multi-file documents...
-    */
-
-    if ((current_time - senddoc_time) >= 10)
-    {
-      cupsdCheckJobs();
-      senddoc_time = current_time;
-    }
-
-   /*
-    * Clean job history...
-    */
-
-    if (JobHistoryUpdate && current_time >= JobHistoryUpdate)
-      cupsdCleanJobs();
 
    /*
     * Log statistics at most once a minute when in debug mode...
@@ -1147,14 +1164,11 @@ main(int  argc,				/* I - Number of command-line args */
 
   cupsdStopServer();
 
-#ifdef HAVE_ONDEMAND
  /*
-  * Update the keep-alive file as needed...
+  * Update the KeepAlive/PID file as needed...
   */
 
-  if (OnDemand)
-    service_checkout();
-#endif /* HAVE_ONDEMAND */
+  service_checkout(1);
 
  /*
   * Stop all jobs...
@@ -1469,9 +1483,16 @@ process_children(void)
               (!job->filters[i] && WIFEXITED(old_status)))
           {				/* Backend and filter didn't crash */
 	    if (job->filters[i])
+	    {
 	      job->status = status;	/* Filter failed */
+	    }
 	    else
+	    {
 	      job->status = -status;	/* Backend failed */
+
+	      if (job->current_file < job->num_files)
+	        cupsdSetJobState(job, IPP_JOB_ABORTED, CUPSD_JOB_FORCE, "Canceling multi-file job due to backend failure.");
+	    }
           }
 
 	  if (job->state_value == IPP_JOB_PROCESSING &&
@@ -1611,7 +1632,6 @@ select_timeout(int fds)			/* I - Number of descriptors returned */
   time_t		now;		/* Current time */
   cupsd_client_t	*con;		/* Client information */
   cupsd_job_t		*job;		/* Job information */
-  cupsd_printer_t       *printer;       /* Printer information */
   const char		*why;		/* Debugging aid */
 
 
@@ -1700,12 +1720,6 @@ select_timeout(int fds)			/* I - Number of descriptors returned */
   * Check for any job activity...
   */
 
-  if (JobHistoryUpdate && timeout > JobHistoryUpdate)
-  {
-    timeout = JobHistoryUpdate;
-    why     = "update job history";
-  }
-
   for (job = (cupsd_job_t *)cupsArrayFirst(ActiveJobs);
        job;
        job = (cupsd_job_t *)cupsArrayNext(ActiveJobs))
@@ -1734,22 +1748,6 @@ select_timeout(int fds)			/* I - Number of descriptors returned */
       why     = "start pending jobs";
       break;
     }
-  }
-
- /*
-  * Check for temporary printers that need to be deleted...
-  */
-
-  for (printer = (cupsd_printer_t *)cupsArrayFirst(Printers); printer; printer = (cupsd_printer_t *)cupsArrayNext(Printers))
-  {
-    if (printer->temporary && !printer->job && local_timeout > (printer->state_time + 60))
-      local_timeout = printer->state_time + 60;
-  }
-
-  if (timeout > local_timeout)
-  {
-    timeout = local_timeout;
-    why     = "delete stale local printers";
   }
 
  /*
@@ -1904,6 +1902,7 @@ service_add_listener(int fd,		/* I - Socket file descriptor */
     lis->encryption = HTTP_ENCRYPT_ALWAYS;
 #  endif /* HAVE_SSL */
 }
+#endif /* HAVE_ONDEMAND */
 
 
 /*
@@ -1913,146 +1912,211 @@ service_add_listener(int fd,		/* I - Socket file descriptor */
 static void
 service_checkin(void)
 {
-#  ifdef HAVE_LAUNCHD
-  int			error;		/* Check-in error, if any */
-  size_t		i,		/* Looping var */
-			count;		/* Number of listeners */
-  int			*ld_sockets;	/* Listener sockets */
-
-
   cupsdLogMessage(CUPSD_LOG_DEBUG, "service_checkin: pid=%d", (int)getpid());
 
- /*
-  * Check-in with launchd...
-  */
-
-  if ((error = launch_activate_socket("Listeners", &ld_sockets, &count)) != 0)
+#ifdef HAVE_LAUNCHD
+  if (OnDemand)
   {
-    cupsdLogMessage(CUPSD_LOG_ERROR, "service_checkin: Unable to get listener sockets: %s", strerror(error));
-    exit(EXIT_FAILURE);
-    return; /* anti-compiler-warning */
+    int       error;                        /* Check-in error, if any */
+    size_t    i,                            /* Looping var */
+              count;                        /* Number of listeners */
+    int       *ld_sockets;                  /* Listener sockets */
+
+#  ifdef __APPLE__
+   /*
+    * Force "user initiated" priority for the main thread...
+    */
+
+    pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0);
+#  endif /* __APPLE__ */
+
+   /*
+    * Check-in with launchd...
+    */
+
+    if ((error = launch_activate_socket("Listeners", &ld_sockets, &count)) != 0)
+    {
+      cupsdLogMessage(CUPSD_LOG_ERROR, "service_checkin: Unable to get listener sockets: %s", strerror(error));
+      exit(EXIT_FAILURE);
+      return; /* anti-compiler-warning */
+    }
+
+   /*
+    * Try to match the launchd sockets to the cupsd listeners...
+    */
+
+    cupsdLogMessage(CUPSD_LOG_DEBUG, "service_checkin: %d listeners.", (int)count);
+
+    for (i = 0; i < count; i ++)
+      service_add_listener(ld_sockets[i], (int)i);
+
+    free(ld_sockets);
+
+#  ifdef __APPLE__
+    xpc_transaction_begin();
+#  endif /* __APPLE__ */
   }
 
- /*
-  * Try to match the launchd sockets to the cupsd listeners...
-  */
-
-  cupsdLogMessage(CUPSD_LOG_DEBUG, "service_checkin: %d listeners.", (int)count);
-
-  for (i = 0; i < count; i ++)
-    service_add_listener(ld_sockets[i], (int)i);
-
-  free(ld_sockets);
-
-#  elif defined(HAVE_SYSTEMD)
-  int			i,		/* Looping var */
-			count;		/* Number of listeners */
-
-
-  cupsdLogMessage(CUPSD_LOG_DEBUG, "service_checkin: pid=%d", (int)getpid());
-
- /*
-  * Check-in with systemd...
-  */
-
-  if ((count = sd_listen_fds(0)) < 0)
+#elif defined(HAVE_SYSTEMD)
+  if (OnDemand)
   {
-    cupsdLogMessage(CUPSD_LOG_ERROR, "service_checkin: Unable to get listener sockets: %s", strerror(-count));
-    exit(EXIT_FAILURE);
-    return; /* anti-compiler-warning */
+    int         i,                      /* Looping var */
+                count;                  /* Number of listeners */
+
+   /*
+    * Check-in with systemd...
+    */
+
+    if ((count = sd_listen_fds(0)) < 0)
+    {
+      cupsdLogMessage(CUPSD_LOG_ERROR, "service_checkin: Unable to get listener sockets: %s", strerror(-count));
+      exit(EXIT_FAILURE);
+      return; /* anti-compiler-warning */
+    }
+
+   /*
+    * Try to match the systemd sockets to the cupsd listeners...
+    */
+
+    cupsdLogMessage(CUPSD_LOG_DEBUG, "service_checkin: %d listeners.", count);
+
+    for (i = 0; i < count; i ++)
+      service_add_listener(SD_LISTEN_FDS_START + i, i);
   }
 
- /*
-  * Try to match the systemd sockets to the cupsd listeners...
-  */
-
-  cupsdLogMessage(CUPSD_LOG_DEBUG, "service_checkin: %d listeners.", count);
-
-  for (i = 0; i < count; i ++)
-    service_add_listener(SD_LISTEN_FDS_START + i, i);
-
-#  elif defined(HAVE_UPSTART)
-  const char		*e;		/* Environment var */
-  int			fd;		/* File descriptor */
-
-
-  if (!(e = getenv("UPSTART_EVENTS")))
+#elif defined(HAVE_UPSTART)
+  if (OnDemand)
   {
-    cupsdLogMessage(CUPSD_LOG_ERROR, "service_checkin: We did not get started via Upstart.");
-    exit(EXIT_FAILURE);
-    return;
+    const char    *e;                   /* Environment var */
+    int           fd;                   /* File descriptor */
+
+
+    if (!(e = getenv("UPSTART_EVENTS")))
+    {
+      cupsdLogMessage(CUPSD_LOG_ERROR, "service_checkin: We did not get started via Upstart.");
+      exit(EXIT_FAILURE);
+      return;
+    }
+
+    if (strcasecmp(e, "socket"))
+    {
+      cupsdLogMessage(CUPSD_LOG_ERROR, "service_checkin: We did not get triggered via an Upstart socket event.");
+      exit(EXIT_FAILURE);
+      return;
+    }
+
+    if ((e = getenv("UPSTART_FDS")) == NULL)
+    {
+      cupsdLogMessage(CUPSD_LOG_ERROR, "service_checkin: Unable to get listener sockets from UPSTART_FDS.");
+      exit(EXIT_FAILURE);
+      return;
+    }
+
+    cupsdLogMessage(CUPSD_LOG_DEBUG, "service_checkin: UPSTART_FDS=%s", e);
+
+    fd = (int)strtol(e, NULL, 10);
+    if (fd < 0)
+    {
+      cupsdLogMessage(CUPSD_LOG_ERROR, "service_checkin: Could not parse UPSTART_FDS: %s", strerror(errno));
+      exit(EXIT_FAILURE);
+      return;
+    }
+
+   /*
+    * Upstart only supportst a single on-demand socket file descriptor...
+    */
+
+    service_add_listener(fd, 0);
   }
-
-  if (strcasecmp(e, "socket"))
-  {
-    cupsdLogMessage(CUPSD_LOG_ERROR, "service_checkin: We did not get triggered via an Upstart socket event.");
-    exit(EXIT_FAILURE);
-    return;
-  }
-
-  if ((e = getenv("UPSTART_FDS")) == NULL)
-  {
-    cupsdLogMessage(CUPSD_LOG_ERROR, "service_checkin: Unable to get listener sockets from UPSTART_FDS.");
-    exit(EXIT_FAILURE);
-    return;
-  }
-
-  cupsdLogMessage(CUPSD_LOG_DEBUG, "service_checkin: UPSTART_FDS=%s", e);
-
-  fd = (int)strtol(e, NULL, 10);
-  if (fd < 0)
-  {
-    cupsdLogMessage(CUPSD_LOG_ERROR, "service_checkin: Could not parse UPSTART_FDS: %s", strerror(errno));
-    exit(EXIT_FAILURE);
-    return;
-  }
-
- /*
-  * Upstart only supportst a single on-demand socket file descriptor...
-  */
-
-  service_add_listener(fd, 0);
-
-#  else
-#    error "Error: defined HAVE_ONDEMAND but no launchd/systemd/upstart selection"
-#  endif /* HAVE_LAUNCH_ACTIVATE_SOCKET */
+#endif /* HAVE_LAUNCHD */
 }
 
 
 /*
- * 'service_checkout()' - Update the CUPS_KEEPALIVE file as needed.
+ * 'service_checkout()' - Update the KeepAlive/PID file as needed.
  */
 
 static void
-service_checkout(void)
+service_checkout(int shutdown)          /* I - Shutting down? */
 {
-  int	fd;				/* File descriptor */
+  cups_file_t   *fp;			/* File */
+  char          pidfile[1024];          /* PID/KeepAlive file */
 
 
  /*
-  * Create or remove the "keep-alive" file based on whether there are active
-  * jobs or shared printers to advertise...
+  * When running on-demand, use the KeepAlive file, otherwise write a PID file
+  * to StateDir...
   */
 
-  if (cupsArrayCount(ActiveJobs) ||	/* Active jobs */
-      WebInterface ||			/* Web interface enabled */
-      NeedReload ||			/* Doing a reload */
-      (Browsing && BrowseLocalProtocols && cupsArrayCount(Printers)))
-					/* Printers being shared */
+#ifdef HAVE_ONDEMAND
+  if (OnDemand)
   {
-    cupsdLogMessage(CUPSD_LOG_DEBUG, "Creating keep-alive file \"" CUPS_KEEPALIVE "\".");
+    int shared_printers = 0;		/* Do we have shared printers? */
 
-    if ((fd = open(CUPS_KEEPALIVE, O_RDONLY | O_CREAT | O_EXCL, S_IRUSR)) >= 0)
-      close(fd);
+    strlcpy(pidfile, CUPS_KEEPALIVE, sizeof(pidfile));
+
+   /*
+    * If printer sharing is on see if there are any actual shared printers...
+    */
+
+    if (Browsing && BrowseLocalProtocols)
+    {
+      cupsd_printer_t *p = NULL;	/* Current printer */
+
+      for (p = (cupsd_printer_t *)cupsArrayFirst(Printers); p; p = (cupsd_printer_t *)cupsArrayNext(Printers))
+      {
+        if (p->shared)
+          break;
+      }
+
+      shared_printers = (p != NULL);
+    }
+
+    if (cupsArrayCount(ActiveJobs) ||	/* Active jobs */
+        WebInterface ||			/* Web interface enabled */
+        NeedReload ||			/* Doing a reload */
+        shared_printers)                /* Printers being shared */
+    {
+     /*
+      * Create or remove the "keep-alive" file based on whether there are active
+      * jobs or shared printers to advertise...
+      */
+
+      shutdown = 0;
+    }
+  }
+  else
+#endif /* HAVE_ONDEMAND */
+  snprintf(pidfile, sizeof(pidfile), "%s/cupsd.pid", StateDir);
+
+  if (shutdown)
+  {
+    cupsdLogMessage(CUPSD_LOG_DEBUG, "Removing KeepAlive/PID file \"%s\".", pidfile);
+
+    unlink(pidfile);
   }
   else
   {
-    cupsdLogMessage(CUPSD_LOG_DEBUG, "Removing keep-alive file \"" CUPS_KEEPALIVE "\".");
+    cupsdLogMessage(CUPSD_LOG_DEBUG, "Creating KeepAlive/PID file \"%s\".", pidfile);
 
-    unlink(CUPS_KEEPALIVE);
+    if ((fp = cupsFileOpen(pidfile, "w")) != NULL)
+    {
+     /*
+      * Save the PID in the file...
+      */
+
+      cupsFilePrintf(fp, "%d\n", (int)getpid());
+      cupsFileClose(fp);
+    }
+    else
+      cupsdLogMessage(CUPSD_LOG_ERROR, "Unable to create KeepAlive/PID file \"%s\": %s", pidfile, strerror(errno));
   }
+
+#  ifdef __APPLE__
+  if (OnDemand && shutdown)
+    xpc_transaction_end();
+#  endif /* __APPLE__ */
 }
-#endif /* HAVE_ONDEMAND */
 
 
 /*
@@ -2067,15 +2131,15 @@ usage(int status)			/* O - Exit status */
 
   _cupsLangPuts(fp, _("Usage: cupsd [options]"));
   _cupsLangPuts(fp, _("Options:"));
-  _cupsLangPuts(fp, _("  -c cupsd.conf           Set cupsd.conf file to use."));
-  _cupsLangPuts(fp, _("  -f                      Run in the foreground."));
-  _cupsLangPuts(fp, _("  -F                      Run in the foreground but detach from console."));
-  _cupsLangPuts(fp, _("  -h                      Show this usage message."));
+  _cupsLangPuts(fp, _("-c cupsd.conf           Set cupsd.conf file to use."));
+  _cupsLangPuts(fp, _("-f                      Run in the foreground."));
+  _cupsLangPuts(fp, _("-F                      Run in the foreground but detach from console."));
+  _cupsLangPuts(fp, _("-h                      Show this usage message."));
 #ifdef HAVE_ONDEMAND
-  _cupsLangPuts(fp, _("  -l                      Run cupsd on demand."));
+  _cupsLangPuts(fp, _("-l                      Run cupsd on demand."));
 #endif /* HAVE_ONDEMAND */
-  _cupsLangPuts(fp, _("  -s cups-files.conf      Set cups-files.conf file to use."));
-  _cupsLangPuts(fp, _("  -t                      Test the configuration file."));
+  _cupsLangPuts(fp, _("-s cups-files.conf      Set cups-files.conf file to use."));
+  _cupsLangPuts(fp, _("-t                      Test the configuration file."));
 
   exit(status);
 }

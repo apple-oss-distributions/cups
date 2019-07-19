@@ -5,14 +5,11 @@
  * created from driver information files, and dynamically generated PPD files
  * using driver helper programs.
  *
- * Copyright 2007-2015 by Apple Inc.
- * Copyright 1997-2007 by Easy Software Products.
+ * Copyright © 2007-2019 by Apple Inc.
+ * Copyright © 1997-2007 by Easy Software Products.
  *
- * These coded instructions, statements, and computer programs are the
- * property of Apple Inc. and are protected by Federal copyright
- * law.  Distribution and use rights are outlined in the file "LICENSE.txt"
- * which should have been included with this file.  If this file is
- * missing or damaged, see the license at "http://www.cups.org/".
+ * Licensed under Apache License v2.0.  See the file "LICENSE" for more
+ * information.
  */
 
 /*
@@ -31,7 +28,7 @@
  * Constants...
  */
 
-#define PPD_SYNC	0x50504439	/* Sync word for ppds.dat (PPD9) */
+#define PPD_SYNC	0x50504441	/* Sync word for ppds.dat (PPDA) */
 #define PPD_MAX_LANG	32		/* Maximum languages */
 #define PPD_MAX_PROD	32		/* Maximum products */
 #define PPD_MAX_VERS	32		/* Maximum versions */
@@ -40,12 +37,9 @@
 #define PPD_TYPE_PDF		1	/* PDF PPD */
 #define PPD_TYPE_RASTER		2	/* CUPS raster PPD */
 #define PPD_TYPE_FAX		3	/* Facsimile/MFD PPD */
-#define PPD_TYPE_OBJECT_ANY	4	/* 3D (AMF/STL/g-code) PPD */
-#define PPD_TYPE_OBJECT_DIRECT	5	/* 3D (AMF/STL/g-code) PPD over any connection */
-#define PPD_TYPE_OBJECT_STORAGE	6	/* 3D (AMF/STL/g-code) PPD for storage to SD card, etc. */
-#define PPD_TYPE_UNKNOWN	7	/* Other/hybrid PPD */
-#define PPD_TYPE_DRV		8	/* Driver info file */
-#define PPD_TYPE_ARCHIVE	9	/* Archive file */
+#define PPD_TYPE_UNKNOWN	4	/* Other/hybrid PPD */
+#define PPD_TYPE_DRV		5	/* Driver info file */
+#define PPD_TYPE_ARCHIVE	6	/* Archive file */
 
 #define TAR_BLOCK	512		/* Number of bytes in a block */
 #define TAR_BLOCKS	10		/* Blocking factor */
@@ -157,7 +151,7 @@ static ppd_info_t	*add_ppd(const char *filename, const char *name,
 				 size_t size, int model_number, int type,
 				 const char *scheme);
 static int		cat_drv(const char *name, int request_id);
-static int		cat_ppd(const char *name, int request_id);
+static void		cat_ppd(const char *name, int request_id);
 static int		cat_static(const char *name, int request_id);
 static int		cat_tar(const char *name, int request_id);
 static int		compare_inodes(struct stat *a, struct stat *b);
@@ -167,12 +161,12 @@ static int		compare_names(const ppd_info_t *p0,
 			              const ppd_info_t *p1);
 static int		compare_ppds(const ppd_info_t *p0,
 			             const ppd_info_t *p1);
-static int		dump_ppds_dat(const char *filename);
+static void		dump_ppds_dat(const char *filename);
 static void		free_array(cups_array_t *a);
 static cups_file_t	*get_file(const char *name, int request_id,
 			          const char *subdir, char *buffer,
 			          size_t bufsize, char **subfile);
-static int		list_ppds(int request_id, int limit, const char *opt);
+static void		list_ppds(int request_id, int limit, const char *opt);
 static int		load_drivers(cups_array_t *include,
 			             cups_array_t *exclude);
 static int		load_drv(const char *filename, const char *name,
@@ -208,13 +202,13 @@ main(int  argc,				/* I - Number of command-line args */
   */
 
   if (argc == 3 && !strcmp(argv[1], "cat"))
-    return (cat_ppd(argv[2], 0));
+    cat_ppd(argv[2], 0);
   else if ((argc == 2 || argc == 3) && !strcmp(argv[1], "dump"))
-    return (dump_ppds_dat(argv[2]));
+    dump_ppds_dat(argv[2]);
   else if (argc == 4 && !strcmp(argv[1], "get"))
-    return (cat_ppd(argv[3], atoi(argv[2])));
+    cat_ppd(argv[3], atoi(argv[2]));
   else if (argc == 5 && !strcmp(argv[1], "list"))
-    return (list_ppds(atoi(argv[2]), atoi(argv[3]), argv[4]));
+    list_ppds(atoi(argv[2]), atoi(argv[3]), argv[4]);
   else
   {
     fputs("Usage: cups-driverd cat ppd-name\n", stderr);
@@ -353,8 +347,7 @@ cat_drv(const char *name,		/* I - PPD name */
     return (1);
   }
 
-  if ((fp = get_file(resource, request_id, "drv", filename, sizeof(filename),
-                     &pc_file_name)) == NULL)
+  if ((fp = get_file(resource, request_id, "drv", filename, sizeof(filename), &pc_file_name)) == NULL || !pc_file_name)
     return (1);
 
   src = new ppdcSource(filename, fp);
@@ -372,8 +365,7 @@ cat_drv(const char *name,		/* I - PPD name */
     ppdcCatalog	*catalog;		// Message catalog in .drv file
 
 
-    fprintf(stderr, "DEBUG2: [cups-driverd] %d locales defined in \"%s\"...\n",
-            src->po_files->count, filename);
+    fprintf(stderr, "DEBUG2: [cups-driverd] %u locales defined in \"%s\"...\n", (unsigned)src->po_files->count, filename);
 
     locales = new ppdcArray();
     for (catalog = (ppdcCatalog *)src->po_files->first();
@@ -432,7 +424,7 @@ cat_drv(const char *name,		/* I - PPD name */
  * 'cat_ppd()' - Copy a PPD file to stdout.
  */
 
-static int				/* O - Exit code */
+static void
 cat_ppd(const char *name,		/* I - PPD name */
         int        request_id)		/* I - Request ID for response? */
 {
@@ -449,7 +441,7 @@ cat_ppd(const char *name,		/* I - PPD name */
   if (strstr(name, "../"))
   {
     fputs("ERROR: Invalid PPD name.\n", stderr);
-    return (1);
+    exit(1);
   }
 
   strlcpy(scheme, name, sizeof(scheme));
@@ -479,11 +471,11 @@ cat_ppd(const char *name,		/* I - PPD name */
     puts("Content-Type: application/ipp\n");
 
   if (!scheme[0])
-    return (cat_static(name, request_id));
+    exit(cat_static(name, request_id));
   else if (!strcmp(scheme, "drv"))
-    return (cat_drv(name, request_id));
+    exit(cat_drv(name, request_id));
   else if (!strcmp(scheme, "file"))
-    return (cat_tar(name, request_id));
+    exit(cat_tar(name, request_id));
   else
   {
    /*
@@ -521,7 +513,7 @@ cat_ppd(const char *name,		/* I - PPD name */
         cupsdSendIPPTrailer();
       }
 
-      return (1);
+      exit(1);
     }
 
    /*
@@ -551,15 +543,15 @@ cat_ppd(const char *name,		/* I - PPD name */
 
       fprintf(stderr, "ERROR: [cups-driverd] Unable to execute \"%s\" - %s\n",
               line, strerror(errno));
-      return (1);
+      exit(1);
     }
   }
 
  /*
-  * Return with no errors...
+  * Exit with no errors...
   */
 
-  return (0);
+  exit(0);
 }
 
 
@@ -782,7 +774,7 @@ compare_ppds(const ppd_info_t *p0,	/* I - First PPD file */
  * 'dump_ppds_dat()' - Dump the contents of the ppds.dat file.
  */
 
-static int				/* O - Exit status */
+static void
 dump_ppds_dat(const char *filename)	/* I - Filename */
 {
   char		temp[1024];		/* ppds.dat filename */
@@ -814,7 +806,7 @@ dump_ppds_dat(const char *filename)	/* I - Filename */
 	   ppd->record.make_and_model, ppd->record.device_id,
 	   ppd->record.scheme);
 
-  return (0);
+  exit(0);
 }
 
 
@@ -1008,7 +1000,7 @@ get_file(const char *name,		/* I - Name */
  * 'list_ppds()' - List PPD files.
  */
 
-static int				/* O - Exit code */
+static void
 list_ppds(int        request_id,	/* I - Request ID */
           int        limit,		/* I - Limit */
 	  const char *opt)		/* I - Option argument */
@@ -1527,8 +1519,20 @@ list_ppds(int        request_id,	/* I - Request ID */
       }
 
       if (send_type)
-	cupsdSendIPPString(IPP_TAG_KEYWORD, "ppd-type",
-			   PPDTypes[ppd->record.type]);
+      {
+        if (ppd->record.type < PPD_TYPE_POSTSCRIPT || ppd->record.type > PPD_TYPE_ARCHIVE)
+        {
+         /*
+          * This cache file is corrupted, remove it!
+          */
+
+          unlink(filename);
+
+	  cupsdSendIPPString(IPP_TAG_KEYWORD, "ppd-type", PPDTypes[PPD_TYPE_UNKNOWN]);
+        }
+        else
+	  cupsdSendIPPString(IPP_TAG_KEYWORD, "ppd-type", PPDTypes[ppd->record.type]);
+      }
 
       if (send_model_number)
 	cupsdSendIPPInteger(IPP_TAG_INTEGER, "ppd-model-number",
@@ -1570,7 +1574,7 @@ list_ppds(int        request_id,	/* I - Request ID */
   if (request_id)
     cupsdSendIPPTrailer();
 
-  return (0);
+  exit(0);
 }
 
 
@@ -2111,22 +2115,6 @@ load_ppd(const char  *filename,		/* I - Real filename */
 	type = PPD_TYPE_RASTER;
       else if (strstr(line + 12, "application/vnd.cups-pdf"))
 	type = PPD_TYPE_PDF;
-      else if (strstr(line + 12, "application/amf") ||
-               strstr(line + 12, "application/g-code") ||
-               strstr(line + 12, "application/sla"))
-	type = PPD_TYPE_OBJECT_ANY;
-    }
-    else if (!strncmp(line, "*cups3DWorkflows:", 17))
-    {
-      int is_direct = strstr(line + 17, "direct") != NULL;
-      int is_storage = strstr(line + 17, "storage") != NULL;
-
-      if (is_direct && !is_storage)
-        type = PPD_TYPE_OBJECT_DIRECT;
-      else if (!is_direct && is_storage)
-        type = PPD_TYPE_OBJECT_STORAGE;
-      else
-        type = PPD_TYPE_OBJECT_ANY;
     }
     else if (!strncmp(line, "*cupsModelNumber:", 17))
       sscanf(line, "*cupsModelNumber:%d", &model_number);
@@ -2404,7 +2392,7 @@ load_ppds(const char *d,		/* I - Actual directory */
   {
     fprintf(stderr, "ERROR: [cups-driverd] Skipping \"%s\": loop detected!\n",
             d);
-    return (0);
+    return (1);
   }
 
  /*
@@ -2619,7 +2607,7 @@ load_ppds_dat(char   *filename,		/* I - Filename buffer */
     unsigned ppdsync;			/* Sync word */
     int      num_ppds;			/* Number of PPDs */
 
-    if (cupsFileRead(fp, (char *)&ppdsync, sizeof(ppdsync)) == sizeof(ppdsync) &&
+    if ((size_t)cupsFileRead(fp, (char *)&ppdsync, sizeof(ppdsync)) == sizeof(ppdsync) &&
         ppdsync == PPD_SYNC &&
         !stat(filename, &fileinfo) &&
 	(((size_t)fileinfo.st_size - sizeof(ppdsync)) % sizeof(ppd_rec_t)) == 0 &&
@@ -2728,7 +2716,7 @@ read_tar(cups_file_t *fp,		/* I - Archive to read */
   tar_rec_t	record;			/* Record from file */
 
 
-  while (cupsFileRead(fp, (char *)&record, sizeof(record)) == sizeof(record))
+  while ((size_t)cupsFileRead(fp, (char *)&record, sizeof(record)) == sizeof(record))
   {
    /*
     * Check for a valid tar header...

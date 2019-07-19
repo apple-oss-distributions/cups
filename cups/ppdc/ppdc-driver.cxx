@@ -1,14 +1,11 @@
 //
 // PPD file compiler definitions for the CUPS PPD Compiler.
 //
-// Copyright 2007-2014 by Apple Inc.
-// Copyright 2002-2006 by Easy Software Products.
+// Copyright © 2007-2019 by Apple Inc.
+// Copyright © 2002-2006 by Easy Software Products.
 //
-// These coded instructions, statements, and computer programs are the
-// property of Apple Inc. and are protected by Federal copyright
-// law.  Distribution and use rights are outlined in the file "LICENSE.txt"
-// which should have been included with this file.  If this file is
-// missing or damaged, see the license at "http://www.cups.org/".
+// Licensed under Apache License v2.0.  See the file "LICENSE" for more
+// information.
 //
 
 //
@@ -398,7 +395,7 @@ ppdcDriver::write_ppd_file(
   // If we don't have a message catalog, use an empty (English) one...
   if (!catalog)
   {
-    catalog    = new ppdcCatalog("en");
+    catalog    = new ppdcCatalog(NULL);
     delete_cat = true;
   }
   else
@@ -709,6 +706,7 @@ ppdcDriver::write_ppd_file(
           _cupsLangPrintf(stderr,
 	                  _("ppdc: No message catalog provided for locale "
 			    "%s."), locale->value);
+          delete locatalog;
           continue;
 	}
 
@@ -1107,7 +1105,10 @@ ppdcDriver::write_ppd_file(
 	  cupsFilePrintf(fp, "*End%s", lf);
       }
 
-      cupsFilePrintf(fp, "*CloseUI: *%s%s", o->name->value, lf);
+      if (o->section == PPDC_SECTION_JCL)
+	cupsFilePrintf(fp, "*JCLCloseUI: *%s%s", o->name->value, lf);
+      else
+	cupsFilePrintf(fp, "*CloseUI: *%s%s", o->name->value, lf);
 
       snprintf(custom, sizeof(custom), "Custom%s", o->name->value);
       if ((a = find_attr(custom, "True")) != NULL)
