@@ -1,7 +1,7 @@
 //
 // Source class for the CUPS PPD Compiler.
 //
-// Copyright 2007-2018 by Apple Inc.
+// Copyright 2007-2020 by Apple Inc.
 // Copyright 2002-2007 by Easy Software Products.
 //
 // Licensed under Apache License v2.0.  See the file "LICENSE" for more
@@ -1743,15 +1743,17 @@ ppdcSource::get_resolution(ppdcFile *fp)// I - File to read
 
   switch (sscanf(name, "%dx%d", &xdpi, &ydpi))
   {
-    case 0 :
-        _cupsLangPrintf(stderr,
-	                _("ppdc: Bad resolution name \"%s\" on line %d of "
-			  "%s."), name, fp->line, fp->filename);
-        break;
     case 1 :
         ydpi = xdpi;
-	break;
-  }
+        break;
+    case 2 :
+        break;
+    default :
+        _cupsLangPrintf(stderr,
+                  _("ppdc: Bad resolution name \"%s\" on line %d of "
+        "%s."), name, fp->line, fp->filename);
+        break;
+}
 
   // Create the necessary PS commands...
   snprintf(command, sizeof(command),

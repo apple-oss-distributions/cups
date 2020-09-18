@@ -1,7 +1,7 @@
 /*
  * Printer routines for the CUPS scheduler.
  *
- * Copyright © 2007-2019 by Apple Inc.
+ * Copyright © 2007-2020 by Apple Inc.
  * Copyright © 1997-2007 by Easy Software Products, all rights reserved.
  *
  * Licensed under Apache License v2.0.  See the file "LICENSE" for more
@@ -446,7 +446,7 @@ cupsdCreateCommonData(void)
 
   /* cups-version */
   ippAddString(CommonData, IPP_TAG_PRINTER, IPP_TAG_TEXT | IPP_TAG_COPY,
-               "cups-version", NULL, CUPS_SVERSION + 6);
+               "cups-version", NULL, &CUPS_SVERSION[6]);
 
   /* generated-natural-language-supported (no IPP_TAG_COPY) */
   ippAddString(CommonData, IPP_TAG_PRINTER, IPP_TAG_LANGUAGE,
@@ -1478,7 +1478,7 @@ cupsdSaveAllPrinters(void)
 			*name;		/* Current user/group name */
   cupsd_printer_t	*printer;	/* Current printer class */
   time_t		curtime;	/* Current time */
-  struct tm		*curdate;	/* Current date */
+  struct tm		curdate;	/* Current date */
   cups_option_t		*option;	/* Current option */
   ipp_attribute_t	*marker;	/* Current marker attribute */
 
@@ -1498,9 +1498,9 @@ cupsdSaveAllPrinters(void)
   * Write a small header to the file...
   */
 
-  curtime = time(NULL);
-  curdate = localtime(&curtime);
-  strftime(temp, sizeof(temp) - 1, "%Y-%m-%d %H:%M", curdate);
+  time(&curtime);
+  localtime_r(&curtime, &curdate);
+  strftime(temp, sizeof(temp) - 1, "%Y-%m-%d %H:%M", &curdate);
 
   cupsFilePuts(fp, "# Printer configuration file for " CUPS_SVERSION "\n");
   cupsFilePrintf(fp, "# Written by cupsd on %s\n", temp);

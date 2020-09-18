@@ -233,7 +233,6 @@ main(int  argc,				/* I - Number of command-line args */
   int		waitjob,			/* Wait for job complete? */
 		waitjob_tries = 0,	/* Number of times we've waited */
 		waitprinter;		/* Wait for printer ready? */
-  time_t	waittime;		/* Wait time for held jobs */
   _cups_monitor_t monitor;		/* Monitoring data */
   ipp_attribute_t *job_id_attr;		/* job-id attribute */
   int		job_id;			/* job-id value */
@@ -1450,6 +1449,8 @@ main(int  argc,				/* I - Number of command-line args */
   monitor.printer_state = IPP_PSTATE_IDLE;
   monitor.retryable     = argc == 6 && document_format && strcmp(document_format, "image/pwg-raster") && strcmp(document_format, "image/urf");
 
+  fprintf(stderr, "DEBUG: retryable=%d\n", monitor.retryable);
+
   if (create_job)
   {
     monitor.job_name = argv[3];
@@ -1867,21 +1868,29 @@ main(int  argc,				/* I - Number of command-line args */
 	response = cupsGetResponse(http, resource);
 	ippDelete(request);
 
-	fprintf(stderr, "DEBUG: Send-Document: %s (%s)\n",
-		ippErrorString(cupsLastError()), cupsLastErrorString());
+	fprintf(stderr, "DEBUG: Send-Document: %s (%s)\n", ippErrorString(cupsLastError()), cupsLastErrorString());
         debug_attributes(response);
-        ippDelete(response);
 
 	if (cupsLastError() > IPP_STATUS_OK_CONFLICTING && !job_canceled)
 	{
+	  ipp_attribute_t *reasons = ippFindAttribute(response, "job-state-reasons", IPP_TAG_KEYWORD);
+					/* job-state-reasons values */
+
 	  ipp_status = cupsLastError();
 
-	  _cupsLangPrintFilter(stderr, "ERROR",
-			       _("Unable to add document to print job."));
+          if (ippContainsString(reasons, "document-format-error"))
+            ipp_status = IPP_STATUS_ERROR_DOCUMENT_FORMAT_ERROR;
+          else if (ippContainsString(reasons, "document-unprintable"))
+            ipp_status = IPP_STATUS_ERROR_DOCUMENT_UNPRINTABLE;
+
+	  ippDelete(response);
+	  _cupsLangPrintFilter(stderr, "ERROR", _("Unable to add document to print job."));
 	  break;
 	}
 	else
 	{
+	  ippDelete(response);
+
 	  password_tries = 0;
 
 	  if (num_files == 0 || fd < 0)
@@ -1898,7 +1907,7 @@ main(int  argc,				/* I - Number of command-line args */
       fprintf(stderr, "PAGE: 1 %d\n", copies_sup ? atoi(argv[4]) : 1);
       copies_remaining --;
     }
-    else if ((ipp_status == IPP_STATUS_ERROR_DOCUMENT_FORMAT_NOT_SUPPORTED || ipp_status == IPP_STATUS_ERROR_DOCUMENT_UNPRINTABLE) &&
+    else if ((ipp_status == IPP_STATUS_ERROR_DOCUMENT_FORMAT_NOT_SUPPORTED || ipp_status == IPP_STATUS_ERROR_DOCUMENT_FORMAT_ERROR || ipp_status == IPP_STATUS_ERROR_DOCUMENT_UNPRINTABLE) &&
              argc == 6 &&
              document_format && strcmp(document_format, "image/pwg-raster") && strcmp(document_format, "image/urf"))
     {
@@ -1999,7 +2008,7 @@ main(int  argc,				/* I - Number of command-line args */
 
     _cupsLangPrintFilter(stderr, "INFO", _("Waiting for job to complete."));
 
-    for (delay = _cupsNextDelay(0, &prev_delay), waittime = time(NULL) + 30; !job_canceled;)
+    for (delay = _cupsNextDelay(0, &prev_delay); !job_canceled;)
     {
      /*
       * Check for side-channel requests...
@@ -2114,11 +2123,10 @@ main(int  argc,				/* I - Number of command-line args */
 		    job_sheets->values[0].integer);
 
 	 /*
-          * Stop polling if the job is finished or pending-held for 30 seconds...
+          * Stop polling if the job is finished or pending-held...
 	  */
 
-          if (job_state->values[0].integer > IPP_JSTATE_STOPPED ||
-	      (job_state->values[0].integer == IPP_JSTATE_HELD && time(NULL) > waittime))
+          if (job_state->values[0].integer > IPP_JSTATE_STOPPED || job_state->values[0].integer == IPP_JSTATE_HELD)
 	  {
 	    ippDelete(response);
 	    break;

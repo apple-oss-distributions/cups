@@ -1,7 +1,7 @@
 /*
  * Internet Printing Protocol functions for CUPS.
  *
- * Copyright © 2007-2019 by Apple Inc.
+ * Copyright © 2007-2020 by Apple Inc.
  * Copyright © 1997-2007 by Easy Software Products, all rights reserved.
  *
  * Licensed under Apache License v2.0.  See the file "LICENSE" for more
@@ -2866,7 +2866,8 @@ ippReadIO(void       *src,		/* I - Data source */
   unsigned char		*buffer,	/* Data buffer */
 			string[IPP_MAX_TEXT],
 					/* Small string buffer */
-			*bufptr;	/* Pointer into buffer */
+			*bufptr,	/* Pointer into buffer */
+			*bufptrEnd;	/* Pointer after valid buffer range */
   ipp_attribute_t	*attr;		/* Current attribute */
   ipp_tag_t		tag;		/* Current tag */
   ipp_tag_t		value_tag;	/* Current value tag */
@@ -2956,7 +2957,7 @@ ippReadIO(void       *src,		/* I - Data source */
             * Read 32-bit "extension" tag...
             */
 
-	    if ((*cb)(src, buffer, 4) < 1)
+	    if ((*cb)(src, buffer, 4) < 4)
 	    {
 	      DEBUG_puts("1ippReadIO: Callback returned EOF/error");
 	      _cupsBufferRelease((char *)buffer);
@@ -3040,8 +3041,13 @@ ippReadIO(void       *src,		/* I - Data source */
 
           DEBUG_printf(("2ippReadIO: name length=%d", n));
 
-          if (n == 0 && tag != IPP_TAG_MEMBERNAME &&
-	      tag != IPP_TAG_END_COLLECTION)
+          if (n && parent)
+          {
+            _cupsSetError(IPP_STATUS_ERROR_INTERNAL, _("Invalid named IPP attribute in collection."), 1);
+            DEBUG_puts("1ippReadIO: bad attribute name in collection.");
+            return (IPP_STATE_ERROR);
+          }
+          else if (n == 0 && tag != IPP_TAG_MEMBERNAME && tag != IPP_TAG_END_COLLECTION)
 	  {
 	   /*
 	    * More values for current attribute...
@@ -3436,6 +3442,8 @@ ippReadIO(void       *src,		/* I - Data source */
 		}
 
                 bufptr = buffer;
+                bufptrEnd = &buffer[n];
+
 
 	       /*
 	        * text-with-language and name-with-language are composite
@@ -3449,7 +3457,7 @@ ippReadIO(void       *src,		/* I - Data source */
 
 		n = (bufptr[0] << 8) | bufptr[1];
 
-		if ((bufptr + 2 + n) >= (buffer + IPP_BUF_SIZE) || n >= (int)sizeof(string))
+		if ((bufptr + 2 + n) > bufptrEnd || n >= (int)sizeof(string))
 		{
 		  _cupsSetError(IPP_STATUS_ERROR_INTERNAL,
 		                _("IPP language length overflows value."), 1);
@@ -3476,7 +3484,7 @@ ippReadIO(void       *src,		/* I - Data source */
                 bufptr += 2 + n;
 		n = (bufptr[0] << 8) | bufptr[1];
 
-		if ((bufptr + 2 + n) >= (buffer + IPP_BUF_SIZE))
+		if ((bufptr + 2 + n) > bufptrEnd)
 		{
 		  _cupsSetError(IPP_STATUS_ERROR_INTERNAL,
 		                _("IPP string length overflows value."), 1);
@@ -4560,7 +4568,7 @@ ippSetValueTag(
           return (0);
 
         if (ipp->attrs && ipp->attrs->next && ipp->attrs->next->name &&
-            !strcmp(ipp->attrs->next->name, "attributes-natural-language"))
+            !strcmp(ipp->attrs->next->name, "attributes-natural-language") && (ipp->attrs->next->value_tag & IPP_TAG_CUPS_MASK) == IPP_TAG_LANGUAGE)
         {
          /*
           * Use the language code from the IPP message...
@@ -4654,7 +4662,7 @@ ippSetVersion(ipp_t *ipp,		/* I - IPP message */
 const ipp_uchar_t *			/* O - RFC-2579 date/time data */
 ippTimeToDate(time_t t)			/* I - Time in seconds */
 {
-  struct tm	*unixdate;		/* UNIX unixdate/time info */
+  struct tm	unixdate;		/* UNIX unixdate/time info */
   ipp_uchar_t	*date = _cupsGlobals()->ipp_date;
 					/* RFC-2579 date/time data */
 
@@ -4676,16 +4684,16 @@ ippTimeToDate(time_t t)			/* I - Time in seconds */
   *    10       UTC minutes (0 to 59)
   */
 
-  unixdate = gmtime(&t);
-  unixdate->tm_year += 1900;
+  gmtime_r(&t, &unixdate);
+  unixdate.tm_year += 1900;
 
-  date[0]  = (ipp_uchar_t)(unixdate->tm_year >> 8);
-  date[1]  = (ipp_uchar_t)(unixdate->tm_year);
-  date[2]  = (ipp_uchar_t)(unixdate->tm_mon + 1);
-  date[3]  = (ipp_uchar_t)unixdate->tm_mday;
-  date[4]  = (ipp_uchar_t)unixdate->tm_hour;
-  date[5]  = (ipp_uchar_t)unixdate->tm_min;
-  date[6]  = (ipp_uchar_t)unixdate->tm_sec;
+  date[0]  = (ipp_uchar_t)(unixdate.tm_year >> 8);
+  date[1]  = (ipp_uchar_t)(unixdate.tm_year);
+  date[2]  = (ipp_uchar_t)(unixdate.tm_mon + 1);
+  date[3]  = (ipp_uchar_t)unixdate.tm_mday;
+  date[4]  = (ipp_uchar_t)unixdate.tm_hour;
+  date[5]  = (ipp_uchar_t)unixdate.tm_min;
+  date[6]  = (ipp_uchar_t)unixdate.tm_sec;
   date[7]  = 0;
   date[8]  = '+';
   date[9]  = 0;
