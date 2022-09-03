@@ -3115,6 +3115,14 @@ ippReadIO(void       *src,		/* I - Data source */
 
                   if (ippSetValueTag(ipp, &attr, tag) == 0)
                   {
+		    // If that failed, and we were converting from IPP_TAG_NAME to IPP_TAG_TEXT, then
+		    // act like we did before and let it slide; other conversions should still be failed
+		    if (value_tag == IPP_TAG_NAME && tag == IPP_TAG_TEXT) {
+		      // this is the epson fax case
+		    } else if (value_tag == IPP_TAG_TEXT && tag == IPP_TAG_NAME) {
+		      // We can allow this as well
+		    } else {
+		      // We'll fail this one
                       _cupsSetError(IPP_STATUS_ERROR_INTERNAL,
                                     _("IPP 1setOf attribute with incompatible value "
                                       "tags."), 1);
@@ -3122,6 +3130,7 @@ ippReadIO(void       *src,		/* I - Data source */
                                     attr->name, ippTagString(value_tag), ippTagString(tag)));
                       _cupsBufferRelease((char *)buffer);
                       return (IPP_STATE_ERROR);
+		    }
                   }
 	      }
             }
@@ -5290,6 +5299,27 @@ ippWrite(http_t *http,			/* I - HTTP connection */
 
   if (!http)
     return (IPP_STATE_ERROR);
+
+  /*
+   * Serialize the request to the http stream.
+   *
+   * REMINDSMA: The illogic here seems to be that cupsSendRequest will mitigate an immediate 401
+   * and then retransmit the body (so we need to fix up the user name there, maybe)
+   * but a 100 will have cupsSendRequest exit and the subsequent cupsGetResponse have to deal
+   * with the 401, and we don't have a body to rewrite there.
+   * So, if we're looping on sending and the user must change, this is the only
+   * reliable place to rewrite it.
+   *
+   * Oh, and to make all this worse, third party tools (eg, ipptool) expect to be able
+   * to have their own version of the cupsSendRequest/cupsGetResponse loop.
+   */
+
+  if (http->rewriteRequestingUser != NULL) {
+    ipp_attribute_t* req_name = ippFindAttribute(ipp, "requesting-user-name", IPP_TAG_ZERO);
+    if (req_name != NULL && strcmp(ippGetString(req_name, 0, NULL), http->rewriteRequestingUser) != 0) {
+      ippSetString(ipp, &req_name, 0, http->rewriteRequestingUser);
+    }
+  }
 
   return (ippWriteIO(http, (ipp_iocb_t)httpWrite2, http->blocking, NULL, ipp));
 }
