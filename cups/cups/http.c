@@ -195,6 +195,7 @@ httpAcceptConnection(int fd,		/* I - Listen socket file descriptor */
   {
     _cupsSetHTTPError(HTTP_STATUS_ERROR);
     httpClose(http);
+    http = NULL;
 
     return (NULL);
   }
@@ -333,13 +334,25 @@ httpClearFields(http_t *http)		/* I - HTTP connection */
 
   if (http)
   {
-    memset(http->_fields, 0, sizeof(http->fields));
+    memset(http->_fields, 0, sizeof(http->_fields));
 
-    for (field = HTTP_FIELD_ACCEPT_LANGUAGE; field < HTTP_FIELD_MAX; field ++)
+    for (field = HTTP_FIELD_ACCEPT_LANGUAGE; field < HTTP_FIELD_ACCEPT_ENCODING; field ++)
     {
-      if (http->fields[field] && http->fields[field] != http->_fields[field])
+      if (!http->fields[field])
+        continue;
+
+      if (http->fields[field] != http->_fields[field])
         free(http->fields[field]);
 
+      http->fields[field] = NULL;
+    }
+
+    for (; field < HTTP_FIELD_MAX; field ++)
+    {
+      if (!http->fields[field])
+        continue;
+
+      free(http->fields[field]);
       http->fields[field] = NULL;
     }
 
@@ -524,6 +537,7 @@ httpConnect2(
   */
 
   httpClose(http);
+  http = NULL;
 
   return (NULL);
 }
@@ -3689,7 +3703,7 @@ http_add_field(http_t       *http,	/* I - HTTP connection */
 
   if (!append && http->fields[field])
   {
-    if (http->fields[field] != http->_fields[field])
+    if (field >= HTTP_FIELD_ACCEPT_ENCODING || http->fields[field] != http->_fields[field])
       free(http->fields[field]);
 
     http->fields[field] = NULL;
@@ -3741,7 +3755,7 @@ http_add_field(http_t       *http,	/* I - HTTP connection */
 
     char	*combined;		/* New value string */
 
-    if (http->fields[field] == http->_fields[field])
+    if (field < HTTP_FIELD_ACCEPT_ENCODING && http->fields[field] == http->_fields[field])
     {
       if ((combined = malloc(total + 1)) != NULL)
       {
