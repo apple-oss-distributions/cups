@@ -401,6 +401,7 @@ _cupsRasterInterpretPPD(
     case CUPS_CSPACE_GOLD :
     case CUPS_CSPACE_SILVER :
     case CUPS_CSPACE_SW :
+    case CUPS_CSPACE_GRAYE:
         h->cupsNumColors    = 1;
         h->cupsBitsPerPixel = h->cupsBitsPerColor;
 	break;
@@ -1112,6 +1113,18 @@ scan_ps(_cups_ps_stack_t *st,		/* I  - Stack */
 	    */
 
 	    cur ++;
+
+	    /*
+	     * Return NULL if we reached NULL terminator, a lone backslash
+	     * is not a valid character in PostScript.
+	     */
+
+	    if (!*cur)
+	    {
+	      *ptr = NULL;
+
+	      return (NULL);
+	    }
 
             if (*cur == 'b')
 	      *valptr++ = '\b';
