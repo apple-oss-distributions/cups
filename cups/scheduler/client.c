@@ -25,6 +25,7 @@
 #ifdef HAVE_TCPD_H
 #  include <tcpd.h>
 #endif /* HAVE_TCPD_H */
+#include <fcntl.h>
 
 #include "mime-private.h"
 
@@ -4209,9 +4210,8 @@ static int _partial_resolveAndOpen(const struct _rooted_path_parts* pp, struct s
     ppLog("PPR: Can't open root '%s' %d/%s", pathRoot(pp->_root_path), errno, strerror(errno));
     return -1;
   }
-
-  int fd = openat(root_fd, pp->_partial, O_RDONLY | O_NOFOLLOW);
-
+    
+  int fd = openat(root_fd, pp->_partial, O_RDONLY | O_NOFOLLOW | O_RESOLVE_BENEATH);
   int serr = errno;
   close(root_fd);
   if (fd == -1) {
